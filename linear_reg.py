@@ -48,8 +48,9 @@ val_y = torch.from_numpy(val_y.reshape(-1,1)).float()
 val_inputs = Variable(val_x)
 val_outputs = Variable(val_y)
 
-x = np.random.rand(100)
-y = np.sin(x) * np.power(x,3) + 3*x + np.random.rand(100)*0.8
+size = 10000
+x = np.random.rand(size)
+y = np.sin(x) * np.power(x,3) + 3*x + np.random.rand(size)*0.8
 
 # convert numpy array to tensor in shape of input size
 x = torch.from_numpy(x.reshape(-1,1)).float()
@@ -77,7 +78,7 @@ for i in range(250):
    k = int(round(BATCH_SIZE * curiosity_ratio))
    if curiosity:
      # select worst items
-     all_losses = all_losses.data.numpy().reshape(100,)
+     all_losses = all_losses.data.numpy().reshape(size,)
      worst = np.argpartition(all_losses, -k)
      retry_idx = worst[-k:]
    else:
