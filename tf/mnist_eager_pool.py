@@ -88,7 +88,7 @@ update_losses_interval = 50
 def normalize(probs):
     return probs / np.sum(probs)
 
-multi = True
+pool = True
 
 def loss(logits, labels, batch_data=None, training=True):
 
@@ -125,7 +125,7 @@ def loss(logits, labels, batch_data=None, training=True):
       #cv2.waitKey(0)
 
       #print("worst k", worst_idx)
-      if multi:
+      if pool:
 
         #print("Append", len(retry_idx))
 
@@ -170,7 +170,7 @@ def loss(logits, labels, batch_data=None, training=True):
         retry_labels = batch_data[1][retry_idx]
 
     else:
-      if multi:
+      if pool:
         # sample from all MNIST
         retry_idx = np.random.choice(mnist_indexes, size=retry_size, replace=False)
         retry_images = X_train[retry_idx]
@@ -310,7 +310,7 @@ def train(model, optimizer, _, step_counter, log_interval=None):
 
       # TODO: update worst_loss data for the retry data
 
-      if multi:
+      if pool:
         if batch % update_losses_interval == 0 and len(worst_data[2]) > 0:
           print("Updating losses...", np.mean(worst_data[2]), len(worst_data[2]))
           curr_loss = np.mean(worst_data[2])
@@ -543,7 +543,7 @@ import time
 
 def main(_):
 
-  global multi, curiosity, curiosity_ratio, RETRY_SIZE, RETRY_POOL_SIZE
+  global pool, curiosity, curiosity_ratio, RETRY_SIZE, RETRY_POOL_SIZE
   global worst_data, data_gen, test_gen, BATCH_SIZE, squared, retry_pool_sample_ratio
 
   MEAN_ITER = 1
@@ -557,13 +557,13 @@ def main(_):
 
   '''
   cur_ratios = [0.2, 0.2, 0.2, 0.2, 0.2]
-  multi_val =  [True, True, True, True, True]
+  pool_val =  [True, True, True, True, True]
   cur_val =    [True, True, True, True, True]
   pool_size =  [50, 100, 250, 500, 1000]
   retry_size_ratios = [0.2, 0.2, 0.2, 0.2, 0.2]  # TODO
   '''
   cur_ratios = [0.33]
-  multi_val =  [False]
+  pool_val =  [False]
   cur_val =    [True]
   pool_size =  [1000]
   retry_size_ratios = [0.33]  # TODO
@@ -576,7 +576,7 @@ def main(_):
     #squared = ci % 2 != 0
     squared = powers[ci]
 
-    multi = multi_val[ci]
+    pool = pool_val[ci]
     curiosity_ratio = cr
     curiosity = cur_val[ci]
     RETRY_POOL_SIZE = pool_size[ci]
@@ -586,7 +586,7 @@ def main(_):
 
     #k = int(round(FULL_BATCH_SIZE * curiosity_ratio))   # extra values
 
-    print("## Run: ratio", cr, "multi", multi)
+    print("## Run: ratio", cr, "pool", pool)
     for i in range(MEAN_ITER):
       print("## Iteration", i, "/", MEAN_ITER, " - ratio", cr)
       set_seed(randint(0, 100000))

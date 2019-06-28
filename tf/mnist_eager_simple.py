@@ -86,15 +86,14 @@ def data_generator_mnist(X_test, y_test, batchSize):
     i = 0
     while (True):
         if (i + batchSize > dataset_size):
-            # simplify
-            i = 0
-            '''
-      head = dataset[0][i:], dataset[1][i:]
-      rest = batchSize - head[0].shape[0]
-      tail = dataset[0][:rest], dataset[1][:rest]
-      yield np.concatenate((head[0], tail[0])), np.concatenate((head[1], tail[1]))
-      i = rest
-      '''
+            
+            #i = 0  # simplify?
+
+            head = dataset[0][i:], dataset[1][i:]
+            rest = batchSize - head[0].shape[0]
+            tail = dataset[0][:rest], dataset[1][:rest]
+            yield np.concatenate((head[0], tail[0])), np.concatenate((head[1], tail[1]))
+            i = rest
         else:
             yield dataset[0][i:i + batchSize], dataset[1][i:i + batchSize]
             i += batchSize
