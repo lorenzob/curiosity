@@ -71,7 +71,7 @@ Even in this case the advantage is visible (very short training).
 
 Here is a simple linear regression on:
 
-np.sin(x) * np.power(x,3) + 3*x
+np.sin(x) \* np.power(x,3) + 3\*x
 
 Curiosity version converges faster and with a more stable value. In this case the curiosity training requires a smaller learning rate (0.1) than the one we could use for the classic training (0.2). If we use lr 0.2 the classic training performance is exactly the same while the curiosity one settles at about 0.34 rather than 0.18.
 
@@ -79,7 +79,8 @@ Curiosity version converges faster and with a more stable value. In this case th
 ![chart](https://lorenzob.github.io/curiosity/images/lin-reg-long.png)
 *<div align="center">Full training comparison, red classic, blue cr 0.25</div>*
 
-Detail of previous training excluding the first 25 iterations, with mean lines.
+![chart](https://lorenzob.github.io/curiosity/images/lin-reg-long-detail.png)
+*<div align="center">Detail of previous training excluding the first 25 iterations, with mean lines.</div>*
 
 Here we let it run exactly like before for more epochs. Each 25 iteration we generate a new datasets with different randomized noise (switches are clearly visible. Yes, this is a weird kind of training because the data is not globally shuffled). You could see this as a fine tuning/transfer learning step. The curiosity training converges faster on the first dataset, and is able to fit better on most of the following datasets. The mean value for the curiosity training is lower but does not always guarantee better results. It’s also interesting to see how much more stable and quick to converge the curiosity training is after each dataset switch, with a clear “flatline” pattern.
 
