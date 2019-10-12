@@ -1,6 +1,9 @@
 
 ## Supervised learning: curiosity by prioritized data?
 
+***Note**: see [this article](https://medium.com/shallowlearnings/supervised-learning-curiosity-by-prioritized-data-c9528849760a) for the original version.*
+
+
 A beautiful idea from reinforcement learning is curiosity, where the agent tries to find new situations where it can likely fail or at least not get too bored. In other words **it works on its mistakes more than it does on its already acquired skills.**
 
 Can we do something similar with supervised learning?
@@ -36,32 +39,32 @@ Below are the accuracy charts (average over three runs) for a simple CNN classif
 
 #### MNIST:
 ![chart](https://miro.medium.com/max/893/1*DfNAaQee_xpKlsFuGFOHMg.png)
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Blue lines are classic training, as baseline (dashed: cr 0.1, dash-dot: cr 0.25). With curiosity: red: 0.1, green: 0.25*
+*<div align="center">Blue lines are classic training, as baseline (dashed: cr 0.1, dash-dot: cr 0.25). With curiosity: red: 0.1, green: 0.25</div>*
 
 Here the accuracy starts much higher and it’s also able to reach a higher value (Note: a non-zero cr means that more data is seen per each iteration so an higher cr by itself is going to give slightly better results, barely visible in this chart in the dashed lines difference).
 
 #### Fashion-MNIST:
 ![chart](https://miro.medium.com/max/893/1*DfNAaQee_xpKlsFuGFOHMg.png)
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Blue: baseline, 0.25. Red: 0.1, green 0.25, magenta: 0.5*
+*<div align="center">Blue: baseline, 0.25. Red: 0.1, green 0.25, magenta: 0.5</div>*
 
 Accuracy starts higher and there is also a small advantage in the “long” run.
 
 #### Fashion MNIST (cr values comparison):
 
 ![chart](https://miro.medium.com/max/893/1*DfNAaQee_xpKlsFuGFOHMg.png)
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Full lines (curiosity): blue: 0.1, red: 0.22, green: 0.33, magenta: 0.6. Dashed lines: classic training with the same cr value.*
+*<div align="center">Full lines (curiosity): blue: 0.1, red: 0.22, green: 0.33, magenta: 0.6. Dashed lines: classic training with the same cr value.</div>*
 
 The dashed magenta line (cr 0.66) uses 166 training samples per iteration while the blue line (cr 0.1) achieves better results with only 110 samples. Raising the cr to 0.66 (magenta) makes the extra batch easier and the accuracy bonus drops, getting closer to what we got with a full random sampling. Sweet spot for cr seems to be between 0.22 and 0.33.
 
 #### CIFAR-10:
 ![chart](https://miro.medium.com/max/893/1*DfNAaQee_xpKlsFuGFOHMg.png)
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Dashed classic, full line cr: 0.33*
+*<div align="center">Dashed classic, full line cr: 0.33</div>*
 
 Even in this case the advantage is visible (very short training).
 
 #### Linear regression:
 ![chart](https://miro.medium.com/max/893/1*DfNAaQee_xpKlsFuGFOHMg.png)
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Red baseline, blue cr 0.25 (loss)*
+*<div align="center">Red baseline, blue cr 0.25 (loss)</div>*
 
 Here is a simple linear regression on:
 
@@ -71,7 +74,7 @@ Curiosity version converges faster and with a more stable value. In this case th
 
 #### Linear regression (long run):
 ![chart](https://miro.medium.com/max/893/1*DfNAaQee_xpKlsFuGFOHMg.png)
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Full training comparison, red classic, blue cr 0.25*
+*<div align="center">Full training comparison, red classic, blue cr 0.25</div>*
 
 Detail of previous training excluding the first 25 iterations, with mean lines.
 
@@ -90,14 +93,14 @@ The basic idea is the same as before but here we incrementally collect the very 
 
 #### MNIST:
 ![chart](https://miro.medium.com/max/893/1*DfNAaQee_xpKlsFuGFOHMg.png)
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Classic, curiosity and pool comparison. Dashed: classic baseline. Red line: basic curiosity 0.33. Pool implementation: blue 250/0.33, green: 1000/0.33 (single runs, not averages)*
+*<div align="center">Classic, curiosity and pool comparison. Dashed: classic baseline. Red line: basic curiosity 0.33. Pool implementation: blue 250/0.33, green: 1000/0.33 (single runs, not averages)</div>*
 
 Here it looks like the pool option may be a small improvement over the previous solution.
 ![chart](https://miro.medium.com/max/893/1*DfNAaQee_xpKlsFuGFOHMg.png)
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Pool sizes comparison. Blue, red, green, magenta, cyan: 50, 100, 250, 500, 1000 all cr 0.2 (very short training)*
+*<div align="center">Pool sizes comparison. Blue, red, green, magenta, cyan: 50, 100, 250, 500, 1000 all cr 0.2 (very short training)</div>*
 
 ![chart](https://miro.medium.com/max/893/1*DfNAaQee_xpKlsFuGFOHMg.png)
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Pool sizes comparison. Green: classic baseline, blue 10000/0.25, red: 1000/0.25 (very short training)*
+*<div align="center">Pool sizes comparison. Green: classic baseline, blue 10000/0.25, red: 1000/0.25 (very short training)</div>*
 
 If the pool size is too small or too large there are no clear benefits. The sweet spot for this dataset seems to be around 1000 samples, about 1% of the whole dataset.
 
@@ -108,7 +111,7 @@ The pool is dynamic: new samples are constantly added and removed and the loss v
 Note: to simplify the implementation the pool could be randomly initialized to its full size when the training starts rather than building it incrementally.
 
 #### CIFAR-10 (longer training):
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Orange: classic baseline, red: pool curiosity 1000/0.33*
+*<div align="center">Orange: classic baseline, red: pool curiosity 1000/0.33</div>*
 
 Here we get a significant gap, about 6%, for the corresponding training step.
 
@@ -121,7 +124,7 @@ We could also try to select the items according to some criteria other than simp
 One thing to notice about the “classic” training is that it is not exactly a standard one. Here we go twice over a few samples from the same batch. May this be the reason for the difference in performance, like we are fitting too much on these few samples? A different approach for a comparison would be to randomly take the extra samples from the whole dataset but in this case this training is going to see more different samples than the curiosity training so this is not completely fair either. In other words the two are not so easy to compare in a fair way. The following chart compares the “curiosity”, “classic” and “classic with full dataset sampling” trainings on MNIST.
 
 ![chart](https://miro.medium.com/max/893/1*DfNAaQee_xpKlsFuGFOHMg.png)
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*Red: classic, green: “classic full sample”, blue: curiosity (cr: 0.25)*
+*<div align="center">Red: classic, green: “classic full sample”, blue: curiosity (cr: 0.25)</div>*
 
 We still see an advantage in the early phase of the training but the “classic full sample” catches up in the later stage.
 
