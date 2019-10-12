@@ -6,7 +6,7 @@ This repo contains the sample implementation for this article:
 
 https://medium.com/p/c9528849760a
 
-https://lorenzob.github.io/curiosity/README.md (GitHub version)
+https://github.com/lorenzob/curiosity/blob/master/docs/README.md (GitHub version)
 
 
 The basic idea is to give a higher priorty to the harder samples in the data set, by training on these more often. See the article for details.
