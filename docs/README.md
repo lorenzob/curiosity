@@ -2,7 +2,7 @@
 ## Supervised learning: curiosity by prioritized data?
 
 &nbsp;
-***Note**: see [this article](https://medium.com/shallowlearnings/supervised-learning-curiosity-by-prioritized-data-c9528849760a) for the original version.*
+***Note**: see [this article](https://medium.com/shallowlearnings/supervised-learning-curiosity-by-prioritized-data-c9528849760a) for the original version with better formatting.*
 
 &nbsp;
 &nbsp;
