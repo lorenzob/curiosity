@@ -1,8 +1,11 @@
 
 ## Supervised learning: curiosity by prioritized data?
 
+&nbsp;
 ***Note**: see [this article](https://medium.com/shallowlearnings/supervised-learning-curiosity-by-prioritized-data-c9528849760a) for the original version.*
 
+&nbsp;
+&nbsp;
 
 A beautiful idea from reinforcement learning is curiosity, where the agent tries to find new situations where it can likely fail or at least not get too bored. In other words **it works on its mistakes more than it does on its already acquired skills.**
 
