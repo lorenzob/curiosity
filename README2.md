@@ -28,7 +28,7 @@ For a fair comparison with classic training we randomly pick the same number of 
 Here is the sample code with PyTorch (see the Github repo for tf and keras examples):
 
 ![chart](https://miro.medium.com/max/1581/1*cLBIc2dWmEMJUkL5YQNVNg.png)
-<div align="center">*The basic “curiosity” training implementation*</div>
+*<div align="center">The basic “curiosity” training implementation</div>*
 
 On line 70 we save the individual losses for each samples. On line 82 we pick the indexes of the elements with the greater loss (retry_idx) and use these to select from r_input and r_outputs the mini batch to use for the extra training step.
 
