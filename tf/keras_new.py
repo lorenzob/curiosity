@@ -128,8 +128,8 @@ def train(marc_mode=False, fix=1):
                 #print(losses)
 
                 # scaled
-                normalized = (losses - min(losses)) / (max(losses) - min(losses))
-                lweights = np.square(normalized)
+                scaled = (losses - min(losses)) / (max(losses) - min(losses))
+                lweights = np.square(scaled)
 
                 # norm
                 lweights /= np.sum(lweights)
