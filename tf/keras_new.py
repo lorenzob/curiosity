@@ -14,7 +14,7 @@ import tensorflow as tf
 
 
 num_classes = 10
-epochs = 1
+epochs = 3
 SEED=123
 
 record_steps=1000
@@ -128,6 +128,7 @@ CURIOSITY_MODE=2
 CURIOSITY_BASELINE=3
 CURIOSITY_BASELINE_FULL_SAMPLE=4
 CURIOSITY_MODE_SINGLE_BATCH=5
+MIXED_MODE=6
 
 def train(mode, curiosity_ratio=1):
 
@@ -169,12 +170,48 @@ def train(mode, curiosity_ratio=1):
                           shuffle=False)
                 sample_count += len(labels)
 
+            elif mode == MIXED_MODE:
+
+                losses = compute_losses(images, labels)
+
+                sample_weights = translate(losses, min(losses), max(losses), 1, 25)
+
+                assert len(labels) == batch_size
+
+                model.fit(images, labels,
+                          batch_size=batch_size,
+                          epochs=1,
+                          verbose=1,
+                          sample_weight=sample_weights,
+                          shuffle=False)
+                sample_count += len(labels)
+
+
+                worst = np.argpartition(losses, -k)
+                retry_idx = worst[-k:]
+                retry_images = batch_data[0][retry_idx]
+                retry_labels = batch_data[1][retry_idx]
+
+                use_weights = False
+                if use_weights:
+                    losses = compute_losses(retry_images, retry_labels)
+                    sample_weights = translate(losses, min(losses), max(losses), 1, 5)
+                else:
+                    sample_weights = np.ones(shape=k)
+
+                assert len(retry_labels) == k
+
+                model.fit(retry_images, retry_labels,
+                          batch_size=k,
+                          epochs=1,
+                          sample_weight=sample_weights,
+                          verbose=1,
+                          shuffle=False)
+                sample_count += len(retry_labels)
+
             elif mode == MARC_MODE:
 
-                y_true = Input(shape=(10,))
-                ce = K.categorical_crossentropy(y_true, model.output)
-                func = K.function(model.inputs + [y_true], [ce])
-                losses = func([images, labels])[0]
+                losses = compute_losses(images, labels)
 
                 # min/max 1 to 10
                 proc_losses = translate(losses, min(losses), max(losses), 1, 50)
@@ -238,15 +275,10 @@ def train(mode, curiosity_ratio=1):
 
             elif mode == CURIOSITY_MODE_SINGLE_BATCH:
 
-                # compute losses
-                y_true = Input(shape=(10,))
-                ce = K.categorical_crossentropy(y_true, model.output)
-                func = K.function(model.inputs + [y_true], [ce])
-                losses = func([images, labels])[0]
+                losses = compute_losses(images, labels)
 
                 worst = np.argpartition(losses, -k)
                 retry_idx = worst[-k:]
-
                 retry_images = batch_data[0][retry_idx]
                 retry_labels = batch_data[1][retry_idx]
 
@@ -275,15 +307,10 @@ def train(mode, curiosity_ratio=1):
 
                 # compute losses before or after fit?
 
-                # compute losses
-                y_true = Input(shape=(10,))
-                ce = K.categorical_crossentropy(y_true, model.output)
-                func = K.function(model.inputs + [y_true], [ce])
-                losses = func([images, labels])[0]
+                losses = compute_losses(images, labels)
 
                 worst = np.argpartition(losses, -k)
                 retry_idx = worst[-k:]
-
                 retry_images = batch_data[0][retry_idx]
                 retry_labels = batch_data[1][retry_idx]
 
@@ -367,6 +394,15 @@ def train(mode, curiosity_ratio=1):
         print("Total processed samples", count)
         return validation, validation_by_sample_count
 
+
+def compute_losses(images, labels):
+    y_true = Input(shape=(10,))
+    ce = K.categorical_crossentropy(y_true, model.output)
+    func = K.function(model.inputs + [y_true], [ce])
+    losses = func([images, labels])[0]
+    return losses
+
+
 import matplotlib.pyplot as plt
 
 color = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b--', 'g--', 'r--', 'c--', 'm--', 'y--', 'k--']
@@ -385,7 +421,9 @@ average_count = 2
 #runs = [(False, None), (True, 0.001), (True, 0.1), (True, 10), (True, 1000)]
 #runs = [(MARC_MODE, 0.25)]
 
-runs = [(CURIOSITY_MODE, 0.25)]
+#runs = [(CURIOSITY_MODE, 0.25)]
+
+runs = [(MIXED_MODE, 0.25)]
 
 #runs = [(BASELINE, ), (CURIOSITY_BASELINE, ), (CURIOSITY_BASELINE_FULL_SAMPLE, ),
 #        (CURIOSITY_MODE, ), (CURIOSITY_MODE_SINGLE_BATCH, )]
@@ -413,7 +451,7 @@ for i, run in enumerate(runs):
 
         avg_validations_by_sample_count.append(validation_by_sample_count)
 
-        ax.plot(t, validation, color[i], alpha=0.2)
+        ax.plot(t, validation, color[i], alpha=0.1)
         fig.savefig(f"preview_{name}.png", dpi=200)
 
     avg_validation = np.mean(avg_validations, axis=0)
@@ -430,7 +468,7 @@ fig.savefig(f"all_{name}.png", dpi=200)
 t = avg_validation_by_sample_count.T[0]
 fig2, ax2 = plt.subplots()
 ax2.grid()
-ax2.set_ylim(0.6, 1)
+ax2.set_ylim(0.9, 1)
 ax2.set_xlim(0, 60000)
 ax2.plot(t, avg_validation_by_sample_count.T[2], color[i])
 #ax2.plot(t, avg_validation_by_sample_count.T[1], color[i])
