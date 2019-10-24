@@ -102,25 +102,19 @@ def create_model():
     return model
 
 
-#model = create_model()
-
-#data_gen = data_generator_mnist(x_train, y_train, batch_size)
-
 def translate(value, fromMin, fromMax, toMin, toMax):
-    # Figure out how 'wide' each range is
+
     fromSpan = fromMax - fromMin
     toSpan = toMax - toMin
 
-    # Convert the left range into a 0-1 range (float)
     valueScaled = (value - fromMin) / fromSpan
 
-    # Convert the 0-1 range into a value in the right range.
     return toMin + (valueScaled * toSpan)
 
 def softmax(x):
-    """Compute softmax values for each sets of scores in x."""
     e_x = np.exp(x - np.max(x))
     return e_x / e_x.sum()
+
 
 BASELINE=0
 MARC_MODE=1
@@ -377,7 +371,6 @@ def train(mode, curiosity_ratio=1):
 
             else:
                 raise Exception("Unsupported mode " + str(mode))
-                #print(sample_weights)
 
             epoch_count += batch_size
             print("Processed samples", epoch_count)
@@ -409,9 +402,6 @@ color = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b--', 'g--', 'r--', 'c--', 'm--', '
 
 plot_steps = (len(y_train)*epochs) / record_steps
 
-#print(validation)
-#fig, ax = plt.subplots()
-#ax.grid()
 t = np.arange(0, plot_steps)
 fig, ax = plt.subplots()
 ax.grid()
