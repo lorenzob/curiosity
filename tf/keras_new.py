@@ -22,12 +22,13 @@ import tensorflow as tf
 
 num_classes = 10
 # default: 3, 2
+# big comparison: 6, 3
 epochs = 3
 average_count = 2
 
 SEED=123
 
-record_steps=1000
+#record_steps=1000
 
 def set_seed(seed):
     print("SEED", seed)
@@ -126,19 +127,18 @@ def softmax(x):
     return e_x / e_x.sum()
 
 
-BASELINE=0
-SWEIGHTS_MODE=1     # keras sample weights based on loss
-CURIOSITY_MODE=2
-CURIOSITY_BASELINE=3
-CURIOSITY_BASELINE_FULL_SAMPLE=4
-CURIOSITY_MODE_SINGLE_BATCH=5
-MIXED_MODE=6
-POOL_MODE=7
-ITER_MODE=8
+BASELINE = 'BASELINE'
+WEIGHTS_MODE = 'WEIGHTS_MODE'  # keras sample weights based on loss
+CURIOSITY_MODE = 'CURIOSITY_MODE'
+CURIOSITY_BASELINE = 'CURIOSITY_BASELINE'
+CURIOSITY_BASELINE_FULL_SAMPLE = 'CURIOSITY_BASELINE_FULL_SAMPLE'
+CURIOSITY_MODE_SINGLE_BATCH = 'CURIOSITY_MODE_SINGLE_BATCH'
+MIXED_MODE = 'MIXED_MODE'
+POOL_MODE = 'POOL_MODE'
+ITER_MODE = 'ITER_MODE'
+ALL_POOL_MODE = 'ALL_POOL_MODE'
 
-ITER_STEPS=4
-
-def train(mode, curiosity_ratio=1):
+def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
     print(f"Mode {mode}, curiosity_ratio: {curiosity_ratio}")
 
@@ -146,13 +146,12 @@ def train(mode, curiosity_ratio=1):
     pool_labels = None
     #pool_losses = None
 
-    base_batch_size = 100
     k = int(base_batch_size * curiosity_ratio)
 
-    if mode in [BASELINE, SWEIGHTS_MODE]:
+    if mode in [BASELINE, WEIGHTS_MODE]:
         batch_size = base_batch_size + k
     elif mode in [ITER_MODE]:
-        batch_size = base_batch_size * ITER_STEPS    # comparable only with cr 1
+        batch_size = base_batch_size * params['ratio']    # comparable only with cr 1
     else:
         batch_size = base_batch_size
 
@@ -193,11 +192,11 @@ def train(mode, curiosity_ratio=1):
                 # iteratively picking the most difficult samples
                 # and using only these for training
 
-                compute_losses_once = True
+                compute_losses_once = params['compute_losses_once']
                 if compute_losses_once:
                     losses = compute_losses(images, labels)
 
-                for iter in range(ITER_STEPS):
+                for iter in range(params['steps']):
 
                     #print("Iteration", iter)
                     if not compute_losses_once:
@@ -218,11 +217,11 @@ def train(mode, curiosity_ratio=1):
 
             elif mode == MIXED_MODE:
 
-                # sweights mode + curiosity
+                # weights mode + curiosity
 
                 losses = compute_losses(images, labels)
 
-                sample_weights = scale(losses, min(losses), max(losses), 1, 10)
+                sample_weights = scale(losses, min(losses), max(losses), 1, params['scale_max'])
 
                 assert len(labels) == batch_size
                 model.fit(images, labels,
@@ -241,9 +240,9 @@ def train(mode, curiosity_ratio=1):
                 retry_images = images[retry_idx]
                 retry_labels = labels[retry_idx]
 
-                use_weights = False
+                use_weights = params['extra_use_weights']
                 if use_weights:
-                    sample_weights = scale(losses, min(losses), max(losses), 1, 5)
+                    sample_weights = scale(losses, min(losses), max(losses), 1, params['extra_scale_max'])
                 else:
                     sample_weights = np.ones(shape=k)
 
@@ -256,14 +255,28 @@ def train(mode, curiosity_ratio=1):
                           shuffle=False)
                 sample_count += len(retry_labels)
 
+            elif mode == ALL_POOL_MODE:
+
+                # finds the worst samples from the whole dataset
+                # i.e. use the whole dataset as pool
+                # (yes, this is going to be slow...)
+
+                fitted = fit_all_pool(batch_size, images, labels, params)
+                sample_count += fitted
+
+                fitted = fit_all_pool(k, images, labels, params)
+                sample_count += fitted
+
             elif mode == POOL_MODE:
 
                 # does extra training with random samples
                 # from the pool of most difficult samples
 
                 # it seems like the best BASE_POOL_SIZE depends on the cr value
-                BASE_POOL_SIZE=batch_size * 10
-                MAX_POOL_SIZE=BASE_POOL_SIZE * 1.5
+                BASE_POOL_SIZE=params['pool_size']
+                # I use this as an optimization only, not to redo the losses
+                # on each iteration.
+                MAX_POOL_SIZE=BASE_POOL_SIZE * params['pool_max_size_factor']
 
                 if pool_images is None:
                     print("Init pool")
@@ -274,7 +287,7 @@ def train(mode, curiosity_ratio=1):
                     pool_labels = y_train[retry_idx]
                     #pool_losses = compute_losses(pool_images, pool_labels)
 
-                # train
+                # train with a fresh batch
                 assert len(labels) == batch_size
                 model.fit(images, labels,
                           batch_size=batch_size,
@@ -315,6 +328,7 @@ def train(mode, curiosity_ratio=1):
                 retry_images = pool_images[retry_idx]
                 retry_labels = pool_labels[retry_idx]
 
+                # train with hard samples
                 assert len(retry_labels) == k
                 model.fit(retry_images, retry_labels,
                           batch_size=k,
@@ -345,7 +359,7 @@ def train(mode, curiosity_ratio=1):
                           "- avg pool/train: ", np.mean(pool_losses), "/", np.mean(losses))
                     #exit(1)
 
-            elif mode == SWEIGHTS_MODE:
+            elif mode == WEIGHTS_MODE:
 
                 # use keras sample weights to make the most difficult
                 # samples more important
@@ -354,14 +368,14 @@ def train(mode, curiosity_ratio=1):
                 first_labels = labels[:base_batch_size]
 
                 assert len(first_labels) == base_batch_size
-                fitted = fit_sweights_mode(first_images, first_labels)
+                fitted = fit_weights_mode(first_images, first_labels, params['scale_max'])
                 sample_count += fitted
 
                 second_images = images[base_batch_size:]
                 second_labels = labels[base_batch_size:]
 
                 assert len(second_labels) == k
-                fitted = fit_sweights_mode(second_images, second_labels)
+                fitted = fit_weights_mode(second_images, second_labels, params['scale_max'])
                 sample_count += fitted
 
             elif mode == CURIOSITY_MODE_SINGLE_BATCH:
@@ -490,12 +504,39 @@ def train(mode, curiosity_ratio=1):
     return validation, validation_by_sample_count
 
 
-def fit_sweights_mode(images, labels):
+def fit_all_pool(batch_size, images, labels, params):
+
+    pool_size = int(x_train.shape[0] * params['dataset_ratio'])
+    #print("fit_all_pool", batch_size, pool_size)
+
+    indexes = np.arange(x_train.shape[0])
+    pool_idx = np.random.choice(indexes, size=pool_size, replace=False)
+    pool_images = x_train[pool_idx].copy()
+    pool_labels = y_train[pool_idx].copy()
+
+    losses = compute_losses(pool_images, pool_labels)
+
+    worst = np.argpartition(losses, -batch_size)
+    retry_idx = worst[-batch_size:]
+    retry_images = pool_images[retry_idx]
+    retry_labels = pool_labels[retry_idx]
+
+    assert len(retry_labels) == batch_size
+    model.fit(retry_images, retry_labels,
+              batch_size=batch_size,
+              epochs=1,
+              verbose=1,
+              shuffle=False)
+
+    return batch_size
+
+
+def fit_weights_mode(images, labels, scale_max):
 
     losses = compute_losses(images, labels)
 
     # min/max 1 to 10
-    proc_losses = scale(losses, min(losses), max(losses), 1, 100)
+    proc_losses = scale(losses, min(losses), max(losses), 1, scale_max)
 
     # proc_losses = np.square(proc_losses)
 
@@ -540,42 +581,77 @@ def compute_losses(images, labels):
     losses = loss_func([images, labels])[0]
     return losses
 
-os.makedirs("data/", exist_ok=True)
-
 color = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b--', 'g--', 'r--', 'c--', 'm--', 'y--', 'k--']
 
 chart_y_scale = 0.6 if epochs == 1 else 0.9
 
-plot_steps = (len(y_train)*epochs) / record_steps
+#plot_steps = (len(y_train)*epochs) / record_steps
 
-#t = np.arange(0, plot_steps)
 fig, ax = plt.subplots()
 ax.grid()
 ax.set_ylim(chart_y_scale, 1)
 
 # by sample count
-fig2, ax2 = plt.subplots()
-ax2.grid()
-ax2.set_ylim(chart_y_scale, 1)
-ax2.set_xlim(0, len(y_train) * epochs)
+fig_by_samples, ax_by_samples = plt.subplots()
+ax_by_samples.grid()
+ax_by_samples.set_ylim(chart_y_scale, 1)
+ax_by_samples.set_xlim(0, len(y_train) * epochs)
+#ax2.set_xlim(0, 360*1000)   # TEMP
 
 #runs = [(False, None), (True, 0.001), (True, 0.1), (True, 10), (True, 1000)]
-#runs = [(SWEIGHTS_MODE, 0.25)]
+#runs = [(WEIGHTS_MODE, 0.25)]
+
+# runs = [(MIXED_MODE, {'scale_max': 100, 'extra_use_weights': False, 'extra_scale_max': 5})]
 
 #runs = [(CURIOSITY_MODE, 0.25)]
 
 #riprovare cosi', con pool 5x
 #runs = [(POOL_MODE, 1)]
 
-#runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1), (POOL_MODE, 1), (SWEIGHTS_MODE, 1)]
+all_runs = [
+        (BASELINE, 1, {}),
+        (CURIOSITY_MODE, 1, {}),
+        (CURIOSITY_BASELINE, 1, {}),
+        (CURIOSITY_BASELINE_FULL_SAMPLE, 1, {}),
+        (CURIOSITY_MODE_SINGLE_BATCH, 1, {}),
+        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.02}),
+        (MIXED_MODE, {'scale_max': 100, 'extra_use_weights': False, 'extra_scale_max': 5}),
+        (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
+        (ITER_MODE, 1, {'ratio': 10, 'steps': 10}),
+        (WEIGHTS_MODE, 1, {'scale_max': 100})]
 
-runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1), (SWEIGHTS_MODE, 1)]
+
+runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1, {}),
+        (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
+        (ITER_MODE, 1, {'ratio': 10, 'steps': 10}),
+        (WEIGHTS_MODE, 1, {'scale_max': 100})]
+
+#runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1, {})]
+
+#runs = [(ALL_POOL_MODE, 1, {'dataset_ratio': 0.1}),
+#        (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5})]
+
+runs = [
+        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.002}),
+        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.005}),
+        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.01}),
+        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.02}),
+        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.03}),
+        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.05})]
+
+runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1, {}),
+        (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
+        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.0}),
+        (ITER_MODE, 1, {'ratio': 10, 'steps': 10}),
+        (WEIGHTS_MODE, 1, {'scale_max': 100})]
+
+#runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1), (WEIGHTS_MODE, 1)]
 
 #runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1)]
-#runs = [(SWEIGHTS_MODE, 1)]
+#runs = [(WEIGHTS_MODE, 1)]
 
 #runs = [(ITER_MODE, 1)]
-#runs = [(SWEIGHTS_MODE, 1)]
+#runs = [(WEIGHTS_MODE, 1)]
 
 #runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1)]
 
@@ -588,7 +664,26 @@ runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1), (SWEIGHTS_MODE, 1)]
 
 # runs = [(True, 1)]
 name = sys.argv[1]
+
+root=f"data/{name}"
+os.makedirs(root, exist_ok=True)
+
+def fprint(*args):
+    print(*args)
+    print(*args, file=open(f'{root}/log.txt', 'a'))
+
+base_batch_size = 100
+
+fprint("PARAMS:", SEED, epochs, average_count, base_batch_size)
+fprint("colors", color)
+fprint("RUNS:", runs)
+
 for i, run in enumerate(runs):
+
+    fig_run, ax_run = plt.subplots()
+    ax_run.grid()
+    ax_run.set_ylim(chart_y_scale, 1)
+    ax_run.set_xlim(0, len(y_train) * epochs)
 
     avg_validations = []
     avg_validations_by_sample_count = []
@@ -599,33 +694,43 @@ for i, run in enumerate(runs):
         K.clear_session()
 
         model = create_model()
-        validation, validation_by_sample_count = train(mode=run[0], curiosity_ratio=run[1])
+
+        start = time.time()
+        fprint(f"{i} RUN {run} avg_iter: {ac} started...")
+        validation, validation_by_sample_count = train(run[0], base_batch_size,
+                                                       curiosity_ratio=run[1], params=run[2])
+        fprint(f"{i} RUN {run} avg_iter: {ac} done. Elapsed: ", time.time() - start)
+
         #print(validation)
         #print(validation_by_sample_count)
         #print("aaa")
         avg_validations.append(validation)
-        np.savetxt(f'data/data_{name}_{i}_{ac}', validation, delimiter=',')
+        np.savetxt(f'{root}/data_{name}_{i}_{ac}', validation, delimiter=',')
 
         avg_validations_by_sample_count.append(validation_by_sample_count)
 
         t = np.arange(0, len(validation))
         ax.plot(t, validation, color[i], alpha=0.1)
-        fig.savefig(f"preview_{name}.png", dpi=200)
+        # this is overwritten multiple times
+        fig.savefig(f"{root}/preview_{name}.png", dpi=200)
 
     avg_validation = np.mean(avg_validations, axis=0)
     ax.plot(t, avg_validation, color[i])
-    np.savetxt(f'data/data_{name}_{i}_avg', avg_validation, delimiter=',')
+    np.savetxt(f'{root}/data_{name}_run_{i}_avg', avg_validation, delimiter=',')
 
     avg_validation_by_sample_count = np.mean(avg_validations_by_sample_count, axis=0)
-    np.savetxt(f'data/data_{name}_{i}_avg_by_sample_count', avg_validation_by_sample_count, delimiter=',')
+    np.savetxt(f'{root}/data_{name}_run_{i}_avg_by_sample_count', avg_validation_by_sample_count, delimiter=',')
 
-    fig.savefig(f"{name}.png", dpi=200)
+    fig.savefig(f"{root}/{name}.png", dpi=200)
 
     t = avg_validation_by_sample_count.T[0]
-    ax2.plot(t, avg_validation_by_sample_count.T[2], color[i])
-    #ax2.plot(t, avg_validation_by_sample_count.T[1], color[i])
-    fig2.savefig(f"{name}_by_samples.png", dpi=200)
+    ax_by_samples.plot(t, avg_validation_by_sample_count.T[2], color[i])
+    # this is overwritten multiple times
+    fig_by_samples.savefig(f"{root}/{name}_by_samples.png", dpi=200)
 
-score = model.evaluate(x_test, y_test, verbose=0)
-print('Test loss:', score[0])
-print('Test accuracy:', score[1])
+    ax_run.plot(t, avg_validation_by_sample_count.T[2], color[i])
+    fig_run.savefig(f"{root}/{name}_run_{i}_by_samples.png", dpi=200)
+
+#score = model.evaluate(x_test, y_test, verbose=0)
+#print('Test loss:', score[0])
+#print('Test accuracy:', score[1])
