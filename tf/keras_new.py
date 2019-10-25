@@ -360,7 +360,7 @@ def train(mode, curiosity_ratio=1):
                 second_images = images[base_batch_size:]
                 second_labels = labels[base_batch_size:]
 
-                assert len(first_labels) == k
+                assert len(second_labels) == k
                 fitted = fit_sweights_mode(second_images, second_labels)
                 sample_count += fitted
 
@@ -475,8 +475,9 @@ def train(mode, curiosity_ratio=1):
 
             print("Processed samples", sample_count, "elapsed:", time.time() - start)
 
-            testing_counter += batch_size
-            if testing_counter > record_steps:
+            testing_counter += base_batch_size
+            #if testing_counter > record_steps:
+            if i % 10 == 0:
                 testing_counter = 0
                 print("Testing model...")
                 loss_acc = model.evaluate(x_test, y_test)
@@ -566,9 +567,9 @@ ax2.set_xlim(0, len(y_train) * epochs)
 #riprovare cosi', con pool 5x
 #runs = [(POOL_MODE, 1)]
 
-runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1), (POOL_MODE, 1), (SWEIGHTS_MODE, 1)]
+#runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1), (POOL_MODE, 1), (SWEIGHTS_MODE, 1)]
 
-#runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1), (SWEIGHTS_MODE, 1)]
+runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1), (SWEIGHTS_MODE, 1)]
 
 #runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1)]
 #runs = [(SWEIGHTS_MODE, 1)]
