@@ -6,6 +6,7 @@ from __future__ import print_function
 
 import random
 import sys
+import time
 
 import keras
 from keras.datasets import mnist
@@ -16,9 +17,11 @@ from keras import backend as K, Input
 
 import tensorflow as tf
 
-
 num_classes = 10
 epochs = 3
+
+average_count = 2
+
 SEED=123
 
 record_steps=1000
@@ -97,6 +100,7 @@ def create_model():
     model.add(Dropout(0.5))
     model.add(Dense(num_classes))
     model.add(Activation('softmax'))
+
     model.compile(loss=keras.losses.categorical_crossentropy,
                   optimizer=keras.optimizers.Adadelta(),
                   metrics=['accuracy'])
@@ -121,44 +125,49 @@ def softmax(x):
 
 
 BASELINE=0
-MARC_MODE=1
+SWEIGHTS_MODE=1     # keras sample weights based on loss
 CURIOSITY_MODE=2
 CURIOSITY_BASELINE=3
 CURIOSITY_BASELINE_FULL_SAMPLE=4
 CURIOSITY_MODE_SINGLE_BATCH=5
 MIXED_MODE=6
 POOL_MODE=7
+ITER_MODE=8
 
 def train(mode, curiosity_ratio=1):
 
+    print(f"Mode {mode}, curiosity_ratio: {curiosity_ratio}")
+
     pool_images = None
     pool_labels = None
-    pool_losses = None
+    #pool_losses = None
 
     base_batch_size = 100
     k = int(base_batch_size * curiosity_ratio)
 
-    if mode in [BASELINE, MARC_MODE]:
+    if mode in [BASELINE, SWEIGHTS_MODE]:
         batch_size = base_batch_size + k
     else:
         batch_size = base_batch_size
 
     data_gen = data_generator_mnist(x_train, y_train, batch_size)
 
-    total_count = 0
     validation = []
     validation_by_sample_count = []
     sample_count = 0
     for e in range(epochs):
 
         print("##Epoch", e, batch_size)
-        epoch_count = 0
+        testing_counter = 0
         for i in range(int(x_train.shape[0] / batch_size)):
+
+            start = time.time()
 
             images, labels = next(data_gen)
 
             if mode == BASELINE:
 
+                # Note: this mode calls fit only once
                 sample_weights = np.ones(shape=batch_size)
 
                 assert len(labels) == batch_size
@@ -169,6 +178,9 @@ def train(mode, curiosity_ratio=1):
                           sample_weight=sample_weights,
                           shuffle=False)
                 sample_count += len(labels)
+
+            elif mode == ITER_MODE:
+                pass
 
             elif mode == MIXED_MODE:
 
@@ -209,7 +221,8 @@ def train(mode, curiosity_ratio=1):
 
             elif mode == POOL_MODE:
 
-                BASE_POOL_SIZE=batch_size * 5
+                # it seems like the best BASE_POOL_SIZE depends on the cr value
+                BASE_POOL_SIZE=batch_size * 10
                 MAX_POOL_SIZE=BASE_POOL_SIZE * 1.5
 
                 if pool_images is None:
@@ -231,16 +244,29 @@ def train(mode, curiosity_ratio=1):
                 sample_count += len(labels)
 
                 # append hard samples to the pool
-                losses = compute_losses(images, labels)
-                worst = np.argpartition(losses, -k)
-                retry_idx = worst[-k:]
-                retry_images = images[retry_idx]
-                retry_labels = labels[retry_idx]
+                full_sample = False # it seems to be worse (?)
+                if full_sample:
+                    # compute this just to compute the pool ratio later
+                    losses = compute_losses(images, labels)
 
-                assert np.mean(losses[retry_idx]) >= np.mean(losses)
+                    indexes = np.arange(x_train.shape[0])
+                    retry_idx = np.random.choice(indexes, size=k, replace=False)
+                    new_pool_images = x_train[retry_idx]
+                    new_pool_labels = y_train[retry_idx]
+                else:
+                    losses = compute_losses(images, labels)
+                    worst = np.argpartition(losses, -k)
+                    retry_idx = worst[-k:]
+                    new_pool_images = images[retry_idx]
+                    new_pool_labels = labels[retry_idx]
 
-                pool_images = np.append(pool_images, retry_images, axis=0)
-                pool_labels = np.append(pool_labels, retry_labels, axis=0)
+                    print(np.mean(losses[retry_idx]), np.mean(losses))
+
+                    assert (np.mean(losses[retry_idx]) >= np.mean(losses)
+                            or np.isclose(np.mean(losses[retry_idx]), np.mean(losses)))
+
+                pool_images = np.append(pool_images, new_pool_images, axis=0)
+                pool_labels = np.append(pool_labels, new_pool_labels, axis=0)
 
                 # pick the samples for the extra training
                 indexes = np.arange(pool_images.shape[0])
@@ -267,18 +293,19 @@ def train(mode, curiosity_ratio=1):
                     sort_idx = np.argsort(-pool_losses, axis=0) # reversed
                     #print(sort_idx)
                     sort_idx = sort_idx[:BASE_POOL_SIZE]
-                    pool_images = pool_images[sort_idx]
-                    pool_labels = pool_labels[sort_idx]
-                    pool_losses = pool_losses[sort_idx]
+                    # copy to disconnect from the old array
+                    pool_images = pool_images[sort_idx].copy()
+                    pool_labels = pool_labels[sort_idx].copy()
+                    pool_losses = pool_losses[sort_idx].copy()
                     #print("Post", np.mean(pool_losses))
                     assert np.mean(pool_losses) >= pre_mean_loss
                     #print(pool_losses)
                     print("Reduce pool done", pool_images.shape[0],
                           "pool loss ratio:",  np.mean(pool_losses)/np.mean(losses),
-                          "avg pool/train", np.mean(pool_losses), "/", np.mean(losses))
+                          "- avg pool/train: ", np.mean(pool_losses), "/", np.mean(losses))
                     #exit(1)
 
-            elif mode == MARC_MODE:
+            elif mode == SWEIGHTS_MODE:
 
                 losses = compute_losses(images, labels)
 
@@ -343,6 +370,7 @@ def train(mode, curiosity_ratio=1):
 
             elif mode == CURIOSITY_MODE_SINGLE_BATCH:
 
+                # Note: this mode calls fit only once
                 losses = compute_losses(images, labels)
 
                 worst = np.argpartition(losses, -k)
@@ -371,8 +399,8 @@ def train(mode, curiosity_ratio=1):
                           shuffle=False)
                 sample_count += len(labels)
 
-                # compute losses before or after fit?
-
+                # computing losses after fit makes more sense
+                # and seems to work better
                 losses = compute_losses(images, labels)
 
                 worst = np.argpartition(losses, -k)
@@ -439,10 +467,11 @@ def train(mode, curiosity_ratio=1):
             else:
                 raise Exception("Unsupported mode " + str(mode))
 
-            epoch_count += batch_size
-            print("Processed samples", epoch_count)
+            print("Processed samples", sample_count, "elapsed:", time.time() - start)
 
-            if epoch_count % record_steps == 0:
+            testing_counter += batch_size
+            if testing_counter > record_steps:
+                testing_counter = 0
                 print("Testing model...")
                 loss_acc = model.evaluate(x_test, y_test)
                 print("loss_acc", loss_acc)
@@ -450,38 +479,48 @@ def train(mode, curiosity_ratio=1):
                 validation.append(loss_acc[1])
                 validation_by_sample_count.append((sample_count, loss_acc[0], loss_acc[1]))
 
-            total_count += epoch_count
-    print("Total processed samples", total_count)
+    print("Total processed samples", sample_count)
     return validation, validation_by_sample_count
 
 
+loss_func = None
 def compute_losses(images, labels):
-    y_true = Input(shape=(10,))
-    ce = K.categorical_crossentropy(y_true, model.output)
-    func = K.function(model.inputs + [y_true], [ce])
-    losses = func([images, labels])[0]
+
+    global loss_func
+
+    if loss_func is None:
+        y_true = Input(shape=(10,))
+        ce = K.categorical_crossentropy(y_true, model.output)
+        loss_func = K.function(model.inputs + [y_true], [ce])
+
+    losses = loss_func([images, labels])[0]
     return losses
 
 
 import matplotlib.pyplot as plt
 
 color = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b--', 'g--', 'r--', 'c--', 'm--', 'y--', 'k--']
-chart_y_scale=0.9
+
+chart_y_scale = 0.6 if epochs == 1 else 0.9
 
 plot_steps = (len(y_train)*epochs) / record_steps
 
-t = np.arange(0, plot_steps)
+#t = np.arange(0, plot_steps)
 fig, ax = plt.subplots()
 ax.grid()
 ax.set_ylim(chart_y_scale, 1)
 
-average_count = 2
 #runs = [(False, None), (True, 0.001), (True, 0.1), (True, 10), (True, 1000)]
-#runs = [(MARC_MODE, 0.25)]
+#runs = [(SWEIGHTS_MODE, 0.25)]
 
 #runs = [(CURIOSITY_MODE, 0.25)]
 
-runs = [(POOL_MODE, 0.25)]
+#riprovare cosi', con pool 5x
+#runs = [(POOL_MODE, 1)]
+
+runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1), (POOL_MODE, 1), (SWEIGHTS_MODE, 1)]
+
+#runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1)]
 
 #runs = [(BASELINE, ), (CURIOSITY_BASELINE, ), (CURIOSITY_BASELINE_FULL_SAMPLE, ),
 #        (CURIOSITY_MODE, ), (CURIOSITY_MODE_SINGLE_BATCH, )]
@@ -498,6 +537,10 @@ for i, run in enumerate(runs):
     avg_validations_by_sample_count = []
     for ac in range(average_count):
 
+        model = None
+        loss_func = None
+        K.clear_session()
+
         model = create_model()
         validation, validation_by_sample_count = train(mode=run[0], curiosity_ratio=run[1])
         #print(validation)
@@ -508,6 +551,7 @@ for i, run in enumerate(runs):
 
         avg_validations_by_sample_count.append(validation_by_sample_count)
 
+        t = np.arange(0, len(validation))
         ax.plot(t, validation, color[i], alpha=0.1)
         fig.savefig(f"preview_{name}.png", dpi=200)
 
@@ -519,7 +563,7 @@ for i, run in enumerate(runs):
     np.savetxt(f'data/data_{name}_{i}_avg_by_sample_count', avg_validation_by_sample_count, delimiter=',')
 
 # fig.savefig("all.png", dpi=200)
-fig.savefig(f"all_{name}.png", dpi=200)
+fig.savefig(f"{name}.png", dpi=200)
 #np.savetxt(f'data/data_{name}_{i}', avg_validation, delimiter=',')
 
 t = avg_validation_by_sample_count.T[0]
