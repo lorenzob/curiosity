@@ -73,8 +73,8 @@ import tensorflow as tf
 num_classes = 10
 # default: 3, 2
 # big comparison: 6, 3
-epochs = 3
-average_count = 2
+epochs = 100
+average_count = 1
 
 SEED=123
 
@@ -121,7 +121,7 @@ def data_generator_mnist(X_test, y_test, batchSize):
 img_rows, img_cols = 28, 28
 
 # the data, split between train and test sets
-use_mnist = not True
+use_mnist = True
 if use_mnist:
     fprint("Dataset MNIST")
     (x_train, y_train), (x_test, y_test) = mnist.load_data()
@@ -155,6 +155,8 @@ y_test = keras.utils.to_categorical(y_test, num_classes)
 x_train = x_train
 y_train = y_train
 
+EARLY_STOP_EPOCHS = 50
+EARLY_STOP_TOLERANCE = 0.01 / 100
 
 def create_model():
 
@@ -172,7 +174,7 @@ def create_model():
     model.add(Activation('softmax'))
 
     model.compile(loss=keras.losses.categorical_crossentropy,
-                  optimizer=keras.optimizers.Adadelta(),
+                  optimizer=keras.optimizers.Adam(),
                   metrics=['accuracy'])
 
     model.summary()
@@ -202,7 +204,6 @@ CURIOSITY_MODE_SINGLE_BATCH = 'CURIOSITY_MODE_SINGLE_BATCH'
 POOL_MODE = 'POOL_MODE'
 ITER_MODE = 'ITER_MODE'
 ALL_POOL_MODE = 'ALL_POOL_MODE'
-SLEEP_MODE='SLEEP_MODE'
 
 def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
@@ -222,11 +223,17 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
     data_gen = data_generator_mnist(x_train, y_train, batch_size)
 
+    warmup_iter = params['warmup_iter'] if 'warmup_iter' in params else 0
+    print("warmup_iter", warmup_iter)
+
     validation = []
     validation_by_sample_count = []
     sample_count = 0
     train_start = time.time()
     k_epoch = 0
+    epochs_with_no_improvements = 0
+    best_acc = 0.0001    # very small numeber
+    best_acc_epoch = 0
     for e in range(epochs):
 
         print("##Epoch", e, batch_size)
@@ -239,35 +246,23 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
             images, labels = next(data_gen)
 
+            if warmup_iter > 0:
+
+                assert len(labels) == batch_size
+                model_fit(images, labels, k_epoch)
+                sample_count += len(labels)
+                k_epoch += 1
+                warmup_iter -= 1
+                continue
+
             if mode == BASELINE:
 
                 # Note: this mode calls fit only once
-                sample_weights = np.ones(shape=batch_size)
 
                 assert len(labels) == batch_size
-                model.fit(images, labels,
-                          batch_size=batch_size,
-                          epochs=k_epoch+1,
-                          verbose=1,
-                          initial_epoch=k_epoch,
-                          sample_weight=sample_weights,
-                          shuffle=False,
-                          callbacks=train_callbacks)
+                model_fit(images, labels, k_epoch)
                 sample_count += len(labels)
                 k_epoch += 1
-
-            elif mode == SLEEP_MODE:
-
-                # alternates one hard batch with an easy batch
-
-                fitted = fit_all_pool(batch_size, images, labels, params, k_epoch)
-                sample_count += fitted
-                k_epoch += 1
-
-                fitted = fit_all_pool(k, images, labels, params, k_epoch, easy=True)
-                sample_count += fitted
-                k_epoch += 1
-
 
             elif mode == ITER_MODE:
 
@@ -288,13 +283,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                     retry_images, retry_labels, _ = sample_by_loss(images, labels, base_batch_size, losses)
 
                     assert len(retry_labels) == base_batch_size
-                    model.fit(retry_images, retry_labels,
-                              batch_size=base_batch_size,
-                              epochs=k_epoch+1,
-                              initial_epoch=k_epoch,
-                              verbose=1,
-                              shuffle=False,
-                              callbacks=train_callbacks)
+                    model_fit(retry_images, retry_labels, k_epoch)
                     sample_count += len(retry_labels)
                     k_epoch += 1
 
@@ -333,13 +322,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
                 # train with a fresh batch
                 assert len(labels) == batch_size
-                model.fit(images, labels,
-                          batch_size=batch_size,
-                          epochs=k_epoch+1,
-                          initial_epoch=k_epoch,
-                          verbose=1,
-                          shuffle=False,
-                          callbacks=train_callbacks)
+                model_fit(images, labels, k_epoch)
                 sample_count += len(labels)
                 k_epoch += 1
 
@@ -374,13 +357,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
                 # train with hard samples
                 assert len(retry_labels) == k
-                model.fit(retry_images, retry_labels,
-                          batch_size=k,
-                          epochs=k_epoch+1,
-                          initial_epoch=k_epoch,
-                          verbose=1,
-                          shuffle=False,
-                          callbacks=train_callbacks)
+                model_fit(retry_images, retry_labels, k_epoch)
                 sample_count += len(retry_labels)
                 k_epoch += 1
 
@@ -441,13 +418,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 joined_labels = np.append(labels, retry_labels, axis=0)
 
                 assert len(joined_labels) == batch_size+k
-                model.fit(joined_images, joined_labels,
-                          batch_size=batch_size+k,
-                          epochs=k_epoch+1,
-                          initial_epoch=k_epoch,
-                          verbose=1,
-                          shuffle=False,
-                          callbacks=train_callbacks)
+                model_fit(joined_images, joined_labels, k_epoch)
                 sample_count += len(joined_labels)
                 k_epoch += 1
 
@@ -457,13 +428,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 # samples from the batch
 
                 assert len(labels) == batch_size
-                model.fit(images, labels,
-                          batch_size=batch_size,
-                          epochs=k_epoch+1,
-                          initial_epoch=k_epoch,
-                          verbose=1,
-                          shuffle=False,
-                          callbacks=train_callbacks)
+                model_fit(images, labels, k_epoch)
                 sample_count += len(labels)
                 k_epoch += 1
 
@@ -489,13 +454,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 # does extra training with randomly selected samples
                 # from the same batch
                 assert len(labels) == batch_size
-                model.fit(images, labels,
-                          batch_size=batch_size,
-                          epochs=k_epoch+1,
-                          initial_epoch=k_epoch,
-                          verbose=1,
-                          shuffle=False,
-                          callbacks=train_callbacks)
+                model_fit(images, labels, k_epoch)
                 sample_count += len(labels)
                 k_epoch += 1
 
@@ -506,13 +465,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 retry_labels = labels[retry_idx]
 
                 assert len(retry_labels) == k
-                model.fit(retry_images, retry_labels,
-                          batch_size=k,
-                          epochs=k_epoch+1,
-                          initial_epoch=k_epoch,
-                          verbose=1,
-                          shuffle=False,
-                          callbacks=train_callbacks)
+                model_fit(retry_images, retry_labels, k_epoch)
                 sample_count += len(retry_labels)
                 k_epoch += 1
 
@@ -521,13 +474,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 # does extra training with randomly selected samples
                 # from the whole dataset
                 assert len(labels) == batch_size
-                model.fit(images, labels,
-                          batch_size=batch_size,
-                          epochs=k_epoch+1,
-                          initial_epoch=k_epoch,
-                          verbose=1,
-                          shuffle=False,
-                          callbacks=train_callbacks)
+                model_fit(images, labels, k_epoch)
                 sample_count += len(labels)
                 k_epoch += 1
 
@@ -538,13 +485,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 retry_labels = y_train[retry_idx]
 
                 assert len(retry_labels) == k
-                model.fit(retry_images, retry_labels,
-                          batch_size=k,
-                          epochs=k_epoch+1,
-                          initial_epoch=k_epoch,
-                          verbose=1,
-                          shuffle=False,
-                          callbacks=train_callbacks)
+                model_fit(retry_images, retry_labels, k_epoch)
                 sample_count += len(retry_labels)
                 k_epoch += 1
 
@@ -573,8 +514,39 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 validation.append(loss_acc[1])
                 validation_by_sample_count.append((sample_count, loss_acc[0], loss_acc[1]))
 
+                perc_difference = (loss_acc[1] - best_acc) / best_acc
+                print("perc_difference", perc_difference * 100, "%", "best", best_acc, "curr", loss_acc[1])
+                if perc_difference <= EARLY_STOP_TOLERANCE:
+                    epochs_with_no_improvements += 1
+                else:
+                    epochs_with_no_improvements = 0
+                print("epochs_with_no_improvements", epochs_with_no_improvements)
+
+                if loss_acc[1] > best_acc:
+                    best_acc = loss_acc[1]
+                    best_acc_epoch = k_epoch
+
+                if epochs_with_no_improvements > EARLY_STOP_EPOCHS:
+                    break
+
+        if epochs_with_no_improvements > EARLY_STOP_EPOCHS:
+            break
+
     fprint("Total processed samples", sample_count,  "elapsed:", time.time() - train_start)
+    fprint("Best accuracy", best_acc, "at epoch", )
     return validation, validation_by_sample_count
+
+
+def model_fit(images, labels, k_epoch):
+    batch_size = len(labels)
+    model.fit(images, labels,
+              batch_size=batch_size,
+              epochs=k_epoch + 1,
+              verbose=1,
+              initial_epoch=k_epoch,
+              shuffle=False,
+              callbacks=train_callbacks)
+
 
 # https://stackoverflow.com/questions/34226400/find-the-index-of-the-k-smallest-values-of-a-numpy-array
 def sample_by_loss(images, labels, size, losses, noise=NOISE, easy=False):
@@ -633,13 +605,7 @@ def fit_all_pool(batch_size, images, labels, params, k_epoch, easy=False):
     retry_images, retry_labels, _ = sample_by_loss(pool_images, pool_labels, batch_size, losses, easy=easy)
 
     assert len(retry_labels) == batch_size
-    model.fit(retry_images, retry_labels,
-              batch_size=batch_size,
-              epochs=k_epoch+1,
-              initial_epoch=k_epoch,
-              verbose=1,
-              shuffle=False,
-              callbacks=train_callbacks)
+    model_fit(retry_images, retry_labels, k_epoch)
 
     return batch_size
 
@@ -670,7 +636,7 @@ def fit_weights_mode(images, labels, scale_max, k_epoch):
 
     batch_size = len(labels)
 
-    #assert len(labels) == batch_size
+    # Here I use sample_weight (do not replace with model_fit)
     model.fit(images, labels,
               batch_size=batch_size,
               epochs=k_epoch+1,
@@ -761,13 +727,19 @@ runs = [(ITER_MODE, 1, {'ratio': 4, 'steps': 4, 'compute_losses_once': False}),
         (ITER_MODE, 1, {'ratio': 20, 'steps': 20, 'compute_losses_once': False}),
         ]
 
+runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1, {}),
+        (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5, 'warmup_iter': 10}),
+        (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5, 'warmup_iter': 100}),
+        (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5, 'warmup_iter': 250}),
+        (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5, 'warmup_iter': 500})]
+
 runs = [(CURIOSITY_BASELINE, 0.25, {}),
         (CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
         (CURIOSITY_MODE, 0.25, {})]
 
 runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1, {}),
         (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.02}),
+        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.01}),
         (WEIGHTS_MODE, 1, {'scale_max': 100})]
 
 #runs = [(ALL_POOL_MODE, 1, {'dataset_ratio': 0.02})]
@@ -809,7 +781,7 @@ for i, run in enumerate(runs):
 
         model = create_model()
 
-        logdir = f"logs/{name}_run_{i}_avg_{ac}"
+        logdir = f"logs/{name}/{name}_run_{i}_avg_{ac}"
         val_writer = tf.summary.FileWriter(logdir)
 
         #tensorboard_callback = keras.callbacks.TensorBoard(log_dir=logdir)
