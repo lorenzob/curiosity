@@ -110,12 +110,14 @@ def fprint(*args):
     print(*args)
     print(*args, file=open(f'{root}/log.txt', 'a'))
 
-def data_generator_mnist(X_test, y_test, batchSize):
+def data_generator_mnist(X, y, batchSize):
 
-    #TODO: shuffle
+    combined = list(zip(X, y))
+    random.shuffle(combined)
+    X[:], y[:] = zip(*combined)
 
-    dataset = (X_test, y_test)
-    dataset_size = len(X_test)
+    dataset = (X, y)
+    dataset_size = len(X)
 
     i = 0
     while (True):
