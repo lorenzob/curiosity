@@ -27,8 +27,12 @@ and once on a difficult batch randomly sampled from the pool.
 
 ALL_POOL_MODE
 Treats the whole dataset as a pool. Randomly pick a very large subset of the dataset (to avoid OOM and to speed up
-computation, ideally it is the whole dataset). From this one selects the most difficult subset and fit on this.
+computation, ideally it is the whole dataset). From this one selects the most difficult subset and fits on this.
 It is repeated two times for easy comparison.
+
+CURIOSITY_ALL_POOL_MODE
+Fit a first normal batch than a hard one samples from the whole dataset. The first batch can be made a little harder
+using the noise param.
 
 
 The following mode calls fit multiple times so it is trickier to compare properly.
@@ -52,6 +56,7 @@ the same size.
 
 import os
 import random
+import shutil
 import sys
 import time
 
@@ -64,8 +69,6 @@ from keras import backend as K, Input
 
 import numpy as np
 
-import matplotlib.pyplot as plt
-
 import tensorflow as tf
 
 num_classes = 10
@@ -76,7 +79,7 @@ average_count = 3
 
 VALIDATION_ITERATIONS=100
 
-EARLY_STOP_PATIENCE = 50
+EARLY_STOP_PATIENCE = 40
 EARLY_STOP_TOLERANCE = 0.01 / 100
 
 # debug settings
@@ -90,14 +93,14 @@ if quick_debug:
 
 SEED=123
 
-NOISE=0
+DEFAULT_NOISE=0
+
+shuffle = True
 
 def set_seed(seed):
     np.random.seed(seed)
     random.seed(seed)
     tf.random.set_random_seed(seed)
-
-set_seed(SEED)
 
 name = sys.argv[1]
 
@@ -112,9 +115,10 @@ def fprint(*args):
 
 def data_generator_mnist(X, y, batchSize):
 
-    combined = list(zip(X, y))
-    random.shuffle(combined)
-    X[:], y[:] = zip(*combined)
+    if shuffle:
+        combined = list(zip(X, y))
+        random.shuffle(combined)
+        X[:], y[:] = zip(*combined)
 
     dataset = (X, y)
     dataset_size = len(X)
@@ -173,6 +177,8 @@ y_train = y_train
 
 def create_model():
 
+    fprint("Base model")
+
     model = Sequential()
     model.add(Conv2D(32, kernel_size=(3, 3),
                      activation='relu',
@@ -200,6 +206,8 @@ def create_adv_model():
     # also try:
     # https://www.kaggle.com/elcaiseri/mnist-simple-cnn-keras-accuracy-0-99-top-1
 
+    fprint("Advanced model")
+
     model = Sequential()
 
     model.add(Conv2D(filters=32, kernel_size=(5, 5), padding='Same',
@@ -220,6 +228,12 @@ def create_adv_model():
     model.add(Dense(256, activation="relu"))
     model.add(Dropout(0.5))
     model.add(Dense(10, activation="softmax"))
+
+    model.compile(loss=keras.losses.categorical_crossentropy,
+                  optimizer=keras.optimizers.Adam(),
+                  metrics=['accuracy'])
+
+    model.summary()
 
     return model
 
@@ -271,12 +285,14 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
     validation = []
     validation_by_sample_count = []
+    best_accuracies = []
     sample_count = 0
     train_start = time.time()
     iteration = 0   # number of fit call (note: some iterations process smaller batches than others)
     iter_with_no_improvements = 0
     best_acc = 0.0001    # very small numeber
     best_acc_iter = 0
+    absolute_best_acc = 0    # very small numeber
     for e in range(epochs):
 
         print("##Epoch", e, batch_size)
@@ -337,24 +353,31 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 # (yes, this is going to be slow...)
                 # This model doe not use the current batch in any way
 
-                fitted = fit_all_pool(batch_size, params, iteration)
+                noise = params.get('noise', 0)
+                fitted = fit_all_pool(batch_size, params, iteration, noise=noise)
                 sample_count += fitted
                 iteration += 1
 
                 fitted = fit_all_pool(k, params, iteration)
                 sample_count += fitted
                 iteration += 1
-
             elif mode == CURIOSITY_ALL_POOL_MODE:
 
                 # fit current batch, than fit the hardest samples
                 # from the whole dataset
 
-                assert len(labels) == batch_size
-                model_fit(images, labels, iteration)
-                sample_count += len(labels)
-                iteration += 1
+                noise = params.get('noise', 0)
+                if noise == 0:
+                    assert len(labels) == batch_size
+                    model_fit(images, labels, iteration)
+                    sample_count += len(labels)
+                    iteration += 1
+                else:
+                    fitted = fit_all_pool(batch_size, params, iteration, noise=noise)
+                    sample_count += fitted
+                    iteration += 1
 
+                # difficult batch
                 fitted = fit_all_pool(k, params, iteration)
                 sample_count += fitted
                 iteration += 1
@@ -557,12 +580,12 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
             #if testing_counter > record_steps:
             if i % VALIDATION_ITERATIONS == 0:
                 testing_counter = 0
-                print("Testing model...")
+                print(f"Testing model... (iter_with_no_improvements: {iter_with_no_improvements}")
 
                 curr_loss, curr_acc = model.evaluate(x_test, y_test, callbacks=eval_callbacks)
                 print("loss_acc", curr_loss, curr_acc)
 
-                smooth_size = 25
+                smooth_size = 15 #25
                 smoothed_acc = np.mean(validation[-smooth_size:]) if len(validation) > smooth_size else np.mean(validation)
                 print("smoothed_acc", smoothed_acc, "curr_acc", curr_acc)
                 smoothed_acc_diff = (curr_acc - smoothed_acc) / smoothed_acc
@@ -579,6 +602,9 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
                 validation.append(curr_acc)
                 validation_by_sample_count.append((sample_count, curr_loss, curr_acc))
+
+                if curr_acc > absolute_best_acc:
+                    absolute_best_acc = curr_acc
 
                 # early stop check
                 use_smoothed_acc=True
@@ -599,6 +625,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 print("iter_with_no_improvements", iter_with_no_improvements)
 
                 if iter_with_no_improvements > EARLY_STOP_PATIENCE:
+                    best_accuracies.append((best_acc, best_acc_iter, time.time() - train_start))
                     break
 
         if iter_with_no_improvements > EARLY_STOP_PATIENCE:
@@ -607,7 +634,8 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
     real_epochs = sample_count/x_train.shape[0]     # number of iterations over the whole dataset
     fprint("Total processed samples", sample_count,  "elapsed:", time.time() - train_start)
     fprint("Best accuracy", best_acc, "at iteration", best_acc_iter, f"(Real epochs: {round(real_epochs, 2)})")
-    return validation, validation_by_sample_count
+    fprint(f"Absolute best: {absolute_best_acc}")
+    return validation, validation_by_sample_count, best_accuracies
 
 
 def model_fit(images, labels, k_epoch):
@@ -622,7 +650,9 @@ def model_fit(images, labels, k_epoch):
 
 
 # https://stackoverflow.com/questions/34226400/find-the-index-of-the-k-smallest-values-of-a-numpy-array
-def sample_by_loss(images, labels, size, losses, noise=NOISE, easiest=False):
+def sample_by_loss(images, labels, size, losses, noise=DEFAULT_NOISE, easiest=False):
+
+    # Use "noise" to get a "fuzzy" sampling of the most difficult items
 
     assert noise >= 0
 
@@ -658,7 +688,7 @@ def sample_by_loss(images, labels, size, losses, noise=NOISE, easiest=False):
         return retry_images, retry_labels, sub_losses[sub_choice_idx]
 
 
-def fit_all_pool(batch_size, params, k_epoch, easiest=False):
+def fit_all_pool(batch_size, params, k_epoch, noise=0):
 
     pool_size = int(x_train.shape[0] * params['dataset_ratio'])
     #print("fit_all_pool", batch_size, pool_size)
@@ -670,7 +700,7 @@ def fit_all_pool(batch_size, params, k_epoch, easiest=False):
 
     losses = compute_losses(pool_images, pool_labels)
 
-    retry_images, retry_labels, _ = sample_by_loss(pool_images, pool_labels, batch_size, losses, easiest=easiest)
+    retry_images, retry_labels, _ = sample_by_loss(pool_images, pool_labels, batch_size, losses, noise=noise)
 
     assert len(retry_labels) == batch_size
     model_fit(retry_images, retry_labels, k_epoch)
@@ -729,22 +759,6 @@ def compute_losses(images, labels):
 
     losses = loss_func([images, labels])[0]
     return losses
-
-
-color = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b--', 'g--', 'r--', 'c--', 'm--', 'y--', 'k--']
-
-chart_y_scale = 0.6 if epochs == 1 else 0.9
-
-fig, ax = plt.subplots()
-ax.grid()
-ax.set_ylim(chart_y_scale, 1)
-
-# by sample count
-fig_by_samples, ax_by_samples = plt.subplots()
-ax_by_samples.grid()
-ax_by_samples.set_ylim(chart_y_scale, 1)
-ax_by_samples.set_xlim(0, len(y_train) * epochs)
-#ax2.set_xlim(0, 360*1000)   # TEMP
 
 #runs = [(CURIOSITY_MODE, 0.25, {}), (CURIOSITY_BASELINE, 0.25, {})]
 
@@ -816,10 +830,9 @@ runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
         (POOL_MODE, 0.25, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
         (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02})]
 
-zruns = [(CURIOSITY_BASELINE_FULL_SAMPLE, 0.2, {}),
-        (CURIOSITY_MODE, 0.2, {}),
-        (CURIOSITY_BASELINE_FULL_SAMPLE, 0.3, {}),
-        (CURIOSITY_MODE, 0.3, {})]
+runs = [#(CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
+        (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'noise': 0}),
+        (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'noise': 3})]
 
 
 #runs = [(ALL_POOL_MODE, 1, {'dataset_ratio': 0.02})]
@@ -840,18 +853,21 @@ zruns = [(CURIOSITY_BASELINE_FULL_SAMPLE, 0.2, {}),
 
 base_batch_size = 100
 
-fprint(f"PARAMS: SEED {SEED}, NOISE {NOISE}")
+notes = sys.argv[2]
+
+shutil.copy(sys.argv[0], "data/" + name)
+
+fprint(f"NAME: {name}")
+fprint(f"NOTES: {notes}")
+fprint(f"PARAMS: SEED {SEED}, DEFAULT_NOISE {DEFAULT_NOISE}, shuffle {shuffle}")
 fprint(f"PARAMS: EARLY_STOP_PATIENCE {EARLY_STOP_PATIENCE}, EARLY_STOP_TOLERANCE {EARLY_STOP_TOLERANCE}")
 fprint(f"PARAMS: epochs {epochs}, average_count {average_count}, base_batch_size {base_batch_size}")
-fprint("colors", color)
 fprint("RUNS:", runs)
 
 for i, run in enumerate(runs):
 
-    fig_run, ax_run = plt.subplots()
-    ax_run.grid()
-    ax_run.set_ylim(chart_y_scale, 1)
-    ax_run.set_xlim(0, len(y_train) * epochs)
+    # all runs use the dataset in the same order (where applicable)
+    set_seed(SEED)
 
     avg_validations = []
     avg_validations_by_sample_count = []
@@ -874,39 +890,23 @@ for i, run in enumerate(runs):
         eval_callbacks = []
 
         start = time.time()
-        fprint(f"{i} RUN {run} avg_iter: {ac} started. Color: {color[i]}")
-        validation, validation_by_sample_count = train(run[0], base_batch_size,
+        fprint(f"{i} RUN {run} avg_iter: {ac} started.")
+        fprint(f"Train params {run[2]}")
+        validation, validation_by_sample_count, best_accuracies = train(run[0], base_batch_size,
                                                        curiosity_ratio=run[1], params=run[2])
         fprint(f"{i} RUN {run} avg_iter: {ac} done. Elapsed: ", time.time() - start)
 
-        #print(validation)
-        #print(validation_by_sample_count)
-        #print("aaa")
         avg_validations.append(validation)
         np.savetxt(f'{root}/data_{name}_{run_name}_{ac}', validation, delimiter=',')
 
         avg_validations_by_sample_count.append(validation_by_sample_count)
         np.savetxt(f'{root}/data_{name}_{run_name}_{ac}_by_sample_count', validation_by_sample_count, delimiter=',')
 
-        # faint lines
-        min_len = min([len(x) for x in avg_validations_by_sample_count])
-        cut_avg_validations_by_sample_count = [x[:min_len] for x in avg_validations_by_sample_count]
-        avg_validation_by_sample_count = np.mean(cut_avg_validations_by_sample_count, axis=0)
-        t = avg_validation_by_sample_count.T[0]
-        ax_by_samples.plot(t, avg_validation_by_sample_count.T[2], color[i], alpha=0.1)
-        fig_by_samples.savefig(f"{root}/preview_{name}_by_samples.png", dpi=200)
-
-        t = np.arange(0, len(validation))
-        ax.plot(t, validation, color[i], alpha=0.2)
-        # this file is overwritten multiple times
-        fig.savefig(f"{root}/preview_{name}.png", dpi=200)
-
         val_writer.close()
 
     min_len = min([len(x) for x in avg_validations])
     cut_avg_validations = [x[:min_len] for x in avg_validations]
     avg_validation = np.mean(cut_avg_validations, axis=0)
-    ax.plot(t[:min_len], avg_validation, color[i])
     np.savetxt(f'{root}/data_{name}_{run_name}_avg', avg_validation, delimiter=',')
 
     print("avg len", [len(x) for x in avg_validations_by_sample_count])
@@ -925,14 +925,10 @@ for i, run in enumerate(runs):
     avg_val_writer.flush()
     avg_val_writer.close()
 
-    fig.savefig(f"{root}/{name}.png", dpi=200)
-
-    t = avg_validation_by_sample_count.T[0]
-    ax_by_samples.plot(t, avg_validation_by_sample_count.T[2], color[i])
-    # this file is overwritten multiple times
-    fig_by_samples.savefig(f"{root}/{name}_by_samples.png", dpi=200)
-
-    ax_run.plot(t, avg_validation_by_sample_count.T[2], color[i])
-    fig_run.savefig(f"{root}/{name}_{run_name}_by_samples.png", dpi=200)
+    best_accuracies = np.asarray(best_accuracies)
+    avg_acc = np.mean(best_accuracies[:, 0])
+    avg_epoch = np.mean(best_accuracies[:, 1])
+    avg_elapsed = np.mean(best_accuracies[:, 2])
+    fprint(f"Best average accuracy for run {run_name}: {avg_acc} at average epoch {avg_epoch} (avg_elapsed {avg_elapsed})")
 
 
