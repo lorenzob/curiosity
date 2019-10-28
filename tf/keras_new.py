@@ -32,7 +32,7 @@ It is repeated two times for easy comparison.
 
 CURIOSITY_ALL_POOL_MODE
 Fit a first normal batch than a hard one samples from the whole dataset. The first batch can be made a little harder
-using the noise param.
+using the extra_sampling param.
 
 
 The following mode calls fit multiple times so it is trickier to compare properly.
@@ -58,6 +58,7 @@ import random
 import shutil
 import sys
 import time
+from builtins import property
 
 import keras
 from keras.datasets import mnist
@@ -78,7 +79,7 @@ average_count = 3
 
 VALIDATION_ITERATIONS=100
 
-EARLY_STOP_PATIENCE = 40
+EARLY_STOP_PATIENCE = 50
 EARLY_STOP_TOLERANCE = 0.01 / 100
 
 # debug settings
@@ -92,7 +93,7 @@ if quick_debug:
 
 SEED=123
 
-DEFAULT_NOISE=0
+DEFAULT_EXTRA_SAMPLING=0
 
 shuffle = True
 
@@ -293,7 +294,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
     iter_with_no_improvements = 0
     best_acc = 0.0001    # very small numeber
     best_acc_iter = 0
-    absolute_best_acc = 0    # very small numeber
+    absolute_best_acc = 0    # very small number
     for e in range(epochs):
 
         print("##Epoch", e, batch_size)
@@ -315,7 +316,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 warmup_iter -= 1
                 continue
 
-            if mode == BASELINE:
+            elif mode == BASELINE:
 
                 # Note: this mode calls fit only once
 
@@ -354,8 +355,8 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 # (yes, this is going to be slow...)
                 # This model doe not use the current batch in any way
 
-                noise = params.get('noise', 0)
-                fitted = fit_all_pool(batch_size, params, iteration, noise=noise)
+                extra_sampling = params.get('extra_sampling', 0)
+                fitted = fit_all_pool(batch_size, params, iteration, extra_sampling=extra_sampling)
                 sample_count += fitted
                 iteration += 1
 
@@ -367,14 +368,19 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 # fit current batch, than fit the hardest samples
                 # from the whole dataset
 
-                noise = params.get('noise', 0)
-                if noise == 0:
+                # here no extra_sampling means to use current batch
+                extra_sampling = params.get('extra_sampling', -1)
+                if extra_sampling == -1:
                     assert len(labels) == batch_size
                     model_fit(images, labels, iteration)
                     sample_count += len(labels)
                     iteration += 1
                 else:
-                    fitted = fit_all_pool(batch_size, params, iteration, noise=noise)
+                    #if random(0, 10) == 0:
+                    #    fitted = fit_all_pool(batch_size, params, iteration, extra_sampling=extra_sampling, easiest=True)
+                    #else:
+                    #    fitted = fit_all_pool(batch_size, params, iteration, extra_sampling=extra_sampling)
+                    fitted = fit_all_pool(batch_size, params, iteration, extra_sampling=extra_sampling)
                     sample_count += fitted
                     iteration += 1
 
@@ -525,7 +531,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                           batch_size=k,
                           epochs=iteration+1,
                           initial_epoch=iteration,
-                          verbose=1,
+                          verbose=0,
                           shuffle=False,
                           callbacks=train_callbacks)
                 sample_count += len(retry_labels)
@@ -644,20 +650,20 @@ def model_fit(images, labels, k_epoch):
     model.fit(images, labels,
               batch_size=batch_size,
               epochs=k_epoch + 1,
-              verbose=1,
+              verbose=0,
               initial_epoch=k_epoch,
               shuffle=False,
               callbacks=train_callbacks)
 
 
 # https://stackoverflow.com/questions/34226400/find-the-index-of-the-k-smallest-values-of-a-numpy-array
-def sample_by_loss(images, labels, size, losses, noise=DEFAULT_NOISE, easiest=False):
+def sample_by_loss(images, labels, size, losses, extra_sampling=DEFAULT_EXTRA_SAMPLING, easiest=False):
 
-    # Use "noise" to get a "fuzzy" sampling of the most difficult items
+    # Use "extra_sampling" to get a "fuzzy" sampling of the most difficult items
 
-    assert noise >= 0
+    assert extra_sampling >= 0
 
-    if noise == 0:
+    if extra_sampling == 0:
         if not easiest:
             worst = np.argpartition(losses, -size)
             retry_idx = worst[-size:]
@@ -670,11 +676,11 @@ def sample_by_loss(images, labels, size, losses, noise=DEFAULT_NOISE, easiest=Fa
             retry_images = images[retry_idx]
             retry_labels = labels[retry_idx]
             return retry_images, retry_labels, losses[retry_idx]
-    elif noise > 0:
+    else:
         if easiest:
-            raise Exception("Easy not supported with noise")
+            raise Exception("Easy not supported with extra_sampling")
 
-        ext_size = int(size * (1 + noise))
+        ext_size = int(size * (1 + extra_sampling))
         worst = np.argpartition(losses, -ext_size)
         retry_idx = worst[-ext_size:]
         sub_images = images[retry_idx].copy()
@@ -689,7 +695,7 @@ def sample_by_loss(images, labels, size, losses, noise=DEFAULT_NOISE, easiest=Fa
         return retry_images, retry_labels, sub_losses[sub_choice_idx]
 
 
-def fit_all_pool(batch_size, params, k_epoch, noise=0):
+def fit_all_pool(batch_size, params, k_epoch, extra_sampling=0, easiest=False):
 
     pool_size = int(x_train.shape[0] * params['dataset_ratio'])
     #print("fit_all_pool", batch_size, pool_size)
@@ -701,7 +707,7 @@ def fit_all_pool(batch_size, params, k_epoch, noise=0):
 
     losses = compute_losses(pool_images, pool_labels)
 
-    retry_images, retry_labels, _ = sample_by_loss(pool_images, pool_labels, batch_size, losses, noise=noise)
+    retry_images, retry_labels, _ = sample_by_loss(pool_images, pool_labels, batch_size, losses, extra_sampling=extra_sampling, easiest=easiest)
 
     assert len(retry_labels) == batch_size
     model_fit(retry_images, retry_labels, k_epoch)
@@ -735,12 +741,12 @@ def fit_weights_mode(images, labels, scale_max, k_epoch):
 
     batch_size = len(labels)
 
-    # Here I use sample_weight (do not replace with model_fit)
+    # Here I use the sample_weights (do not replace this with model_fit)
     model.fit(images, labels,
               batch_size=batch_size,
               epochs=k_epoch+1,
               initial_epoch=k_epoch,
-              verbose=1,
+              verbose=0,
               sample_weight=sample_weights,
               shuffle=False,
               callbacks=train_callbacks)
@@ -831,15 +837,12 @@ runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
         (POOL_MODE, 0.25, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
         (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02})]
 
-runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
-        #(CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'noise': 0}),
-        #(CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'noise': 3})
-        ]
+runs = [#(CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
+        #(CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02}),
+        (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'extra_sampling': 8})]
 
 
 #runs = [(ALL_POOL_MODE, 1, {'dataset_ratio': 0.02})]
-
-#runs = [(SLEEP_MODE, 1, {'dataset_ratio': 0.02})]
 
 #runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1, {})]
 
@@ -861,7 +864,7 @@ shutil.copy(sys.argv[0], "data/" + name)
 
 fprint(f"NAME: {name}")
 fprint(f"NOTES: {notes}")
-fprint(f"PARAMS: SEED {SEED}, DEFAULT_NOISE {DEFAULT_NOISE}, shuffle {shuffle}")
+fprint(f"PARAMS: SEED {SEED}, DEFAULT_EXTRA_SAMPLING {DEFAULT_EXTRA_SAMPLING}, shuffle {shuffle}")
 fprint(f"PARAMS: EARLY_STOP_PATIENCE {EARLY_STOP_PATIENCE}, EARLY_STOP_TOLERANCE {EARLY_STOP_TOLERANCE}")
 fprint(f"PARAMS: epochs {epochs}, average_count {average_count}, base_batch_size {base_batch_size}")
 fprint("RUNS:", runs)
