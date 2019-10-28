@@ -44,7 +44,6 @@ the next one.
 This mode is comparable only on by_sample_count, not by iterations. It is comparable only with curiosity_ratio = 1
 
 
-
 Two charts are created, the "_by_samples" ones are the easiest to compare. Charts are strictly comparable only
 for the same curiosity_ratio (and for modes with the same number of fit calls).
 
@@ -116,9 +115,11 @@ def fprint(*args):
 def data_generator_mnist(X, y, batchSize):
 
     if shuffle:
-        combined = list(zip(X, y))
-        random.shuffle(combined)
-        X[:], y[:] = zip(*combined)
+        #combined = list(zip(X, y))
+        #random.shuffle(combined)
+        #X[:], y[:] = zip(*combined)
+        import sklearn
+        X, y = sklearn.utils.shuffle(X, y)
 
     dataset = (X, y)
     dataset_size = len(X)
@@ -830,9 +831,10 @@ runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
         (POOL_MODE, 0.25, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
         (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02})]
 
-runs = [#(CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
-        (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'noise': 0}),
-        (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'noise': 3})]
+runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
+        #(CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'noise': 0}),
+        #(CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'noise': 3})
+        ]
 
 
 #runs = [(ALL_POOL_MODE, 1, {'dataset_ratio': 0.02})]
