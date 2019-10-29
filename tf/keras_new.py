@@ -97,7 +97,7 @@ average_count = 3
 
 VALIDATION_ITERATIONS = 100
 
-EARLY_STOP_PATIENCE = 25
+EARLY_STOP_PATIENCE = 12
 EARLY_STOP_TOLERANCE = 0.1 / 100
 
 # debug settings
@@ -161,7 +161,7 @@ def data_generator_mnist(X, y, batchSize):
 img_rows, img_cols = 28, 28
 
 # the data, split between train and test sets
-use_mnist = True
+use_mnist = not True
 if use_mnist:
     fprint("Dataset MNIST")
     (x_train, y_train), (x_test, y_test) = mnist.load_data()
@@ -352,6 +352,10 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
                 else:
 
+                    losses_first = params.get('losses_first', False)
+                    if losses_first:
+                        losses = compute_losses(images, labels)
+
                     assert len(labels) == batch_size
                     fitted = model_fit(images, labels, iteration)
                     sample_count += fitted
@@ -359,7 +363,8 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
                     # computing losses after fit makes more sense
                     # and seems to work better
-                    losses = compute_losses(images, labels)
+                    if not losses_first:
+                        losses = compute_losses(images, labels)
                     retry_images, retry_labels, _ = sample_by_loss(images, labels, k, losses)
 
                     assert len(retry_labels) == k
@@ -560,25 +565,26 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 train_loss, train_acc = model.evaluate(x_train_sample, y_train_sample)
                 print("training loss_acc", train_loss, train_acc)
 
-                for name, value in [("training loss", train_loss), ("training accuracy", train_acc)]:
+                for name, value in [("loss", train_loss), ("accuracy", train_acc)]:
                     summary = tf.Summary()
                     summary_value = summary.value.add()
                     summary_value.simple_value = value.item()
                     summary_value.tag = name
-                    logs_writer.add_summary(summary, iteration)
-                logs_writer.flush()
+                    train_writer.add_summary(summary, iteration)
+                train_writer.flush()
 
                 # eval test set
                 test_loss, test_acc = model.evaluate(x_test, y_test, callbacks=eval_callbacks)
                 print("test loss_acc", test_loss, test_acc)
 
-                for name, value in [("test loss", test_loss), ("test accuracy", test_acc)]:
+                for name, value in [("loss", test_loss), ("accuracy", test_acc),
+                                    ("test loss", test_loss), ("test accuracy", test_acc)]:
                     summary = tf.Summary()
                     summary_value = summary.value.add()
                     summary_value.simple_value = value.item()
                     summary_value.tag = name
-                    logs_writer.add_summary(summary, iteration)
-                logs_writer.flush()
+                    test_writer.add_summary(summary, iteration)
+                test_writer.flush()
 
                 validation.append(test_acc)
                 validation_by_sample_count.append((sample_count, test_loss, test_acc))
@@ -592,7 +598,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
                 perc_difference = (early_stop_curr_loss - best_loss) / best_loss
                 print("testing loss perc_difference", perc_difference * 100, "%", "prev best_loss", best_loss, "curr loss", early_stop_curr_loss)
-                if perc_difference > EARLY_STOP_TOLERANCE:
+                if perc_difference >= EARLY_STOP_TOLERANCE:
                     iter_with_no_improvements += 1
                 else:
                     iter_with_no_improvements = 0
@@ -786,7 +792,16 @@ baseline_runs = [(BASELINE, 0.25, {'name': 'BL_FIX_25_sb', 'single_batch': True}
                  (CURIOSITY_BASELINE, 0.25, {'dataset_ratio': 0.02, 'name': 'CBL_FIX_25_sb', 'single_batch': True}),
                  (CURIOSITY_BASELINE, 0.5, {'dataset_ratio': 0.02, 'name': 'CBL_FIX_50_sb', 'single_batch': True})]
 
-runs = [(BASELINE, 0.25, {'name': 'BL_FIX_25_sb', 'single_batch': True})]
+fashion_comp_ext = [(CURIOSITY_FULL_MODE, 0.1, {'dataset_ratio': 0.02, 'name': 'CF_FIX_10_2b', 'single_batch': False}),
+                   (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.02, 'name': 'CF_FIX_50_2b', 'single_batch': False}),
+                   (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CF_FIX_25_2b_losses_first',
+                                                'single_batch': False, 'losses_first': True})]
+
+fashion_comp_sb = [(BASELINE, 0.25, {'dataset_ratio': 0.02, 'name': 'BL_FIX_25_sb', 'single_batch': True}),
+                   (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CF_FIX_25_sb', 'single_batch': True}),
+                   (CURIOSITY_MODE, 0.25, {'name': 'CF_FIX_25_sb', 'single_batch': True})]
+
+runs = fashion_comp_ext
 
 base_batch_size = 125
 
@@ -829,8 +844,11 @@ for i, run in enumerate(runs):
 
         model = create_model()
 
-        logdir = f"logs/{name}/{name}_{run_name}_avg_{ac}"
-        logs_writer = tf.summary.FileWriter(logdir)
+        logdir = f"logs/{name}/test/{name}_{run_name}_avg_{ac}"
+        test_writer = tf.summary.FileWriter(logdir)
+
+        logdir = f"logs/{name}/train/{name}_{run_name}_avg_{ac}"
+        train_writer = tf.summary.FileWriter(logdir)
 
         #tensorboard_callback = keras.callbacks.TensorBoard(log_dir=logdir)
         #eval_callbacks = [tensorboard_callback]
@@ -849,7 +867,8 @@ for i, run in enumerate(runs):
         avg_validations_by_sample_count.append(validation_by_sample_count)
         np.savetxt(f'{root}/data_{name}_{run_name}_{ac}_by_sample_count', validation_by_sample_count, delimiter=',')
 
-        logs_writer.close()
+        test_writer.close()
+        train_writer.close()
 
     min_len = min([len(x) for x in avg_validations])
     cut_avg_validations = [x[:min_len] for x in avg_validations]
@@ -863,10 +882,10 @@ for i, run in enumerate(runs):
     np.savetxt(f'{root}/data_{name}_{run_name}_avg_by_sample_count', avg_validation_by_sample_count, delimiter=',')
 
     # add accuracy on tensorboard
-    logdir = f"logs/{name}/{name}_{run_name}_AVG"
+    logdir = f"logs/{name}/test/{name}_{run_name}_AVG"
     avg_val_writer = tf.summary.FileWriter(logdir)
     for iter, loss, acc in avg_validation_by_sample_count:
-        summary = tf.Summary(value=[tf.Summary.Value(tag="average_acc",
+        summary = tf.Summary(value=[tf.Summary.Value(tag="average test accuracy",
                                                      simple_value=acc)])
         avg_val_writer.add_summary(summary, iter)
     avg_val_writer.flush()
