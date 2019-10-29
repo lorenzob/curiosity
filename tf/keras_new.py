@@ -19,7 +19,7 @@ This mode, like many others, can be run with "single_batch" or not (see below fo
 
 CURIOSITY_BASELINE
 Just like CURIOSITY_MODE but the extra batch is randomly selected from the first batch. This mode exists only as a
-strict baseline for CURIOSITY_MODE. It does not make sense to use it in any other way. This mode should perform worse
+strict baseline for CURIOSITY_MODE. It does not make sense to use it in any others way. This mode should perform worse
 than BASELINE. If CURIOSITY_MODE performs better than BASELINE it means it also overcomes for this disadvantage.
 
 CURIOSITY_POOL_MODE
@@ -53,7 +53,7 @@ Dataset order is the same for each run, but differs for each average iteration.
 
 # Why "single_batch"
 Calling fit once with a large batch or twice with two "half" batches is obviously different as two calls mean two
-pass of back propagation. Some modes are naturally "single mode", CLASSIC, other are two steps modes. Having only two
+pass of back propagation. Some modes are naturally "single mode", CLASSIC, others are two steps modes. Having only two
 steps modes might be the most natural choice but this make dangerous to compare different curiosity ratios: calling fit
 twice with two batches of size 10 and 90 might be slightly different from two batches with sizes 50 and 50.
 
@@ -95,17 +95,17 @@ num_classes = 10
 epochs = 100
 average_count = 3
 
-VALIDATION_ITERATIONS=100
+VALIDATION_ITERATIONS = 100
 
-EARLY_STOP_PATIENCE = 50
-EARLY_STOP_TOLERANCE = 0.01 / 100
+EARLY_STOP_PATIENCE = 25
+EARLY_STOP_TOLERANCE = 0.1 / 100
 
 # debug settings
 quick_debug=False
 if quick_debug:
-    epochs = 1
+    epochs = 2
     average_count = 2
-    EARLY_STOP_PATIENCE = 5
+    EARLY_STOP_PATIENCE = 2
     EARLY_STOP_TOLERANCE = 1 / 100
 
 
@@ -161,7 +161,7 @@ def data_generator_mnist(X, y, batchSize):
 img_rows, img_cols = 28, 28
 
 # the data, split between train and test sets
-use_mnist = not True
+use_mnist = True
 if use_mnist:
     fprint("Dataset MNIST")
     (x_train, y_train), (x_test, y_test) = mnist.load_data()
@@ -302,16 +302,16 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
     train_start = time.time()
     iteration = 0   # number of fit call (note: some iterations process smaller batches than others)
     iter_with_no_improvements = 0
-    best_acc = 0.0001    # very small numeber
-    best_acc_iter = 0
-    absolute_best_acc = 0    # very small number
+    best_loss = 1000    # very large numeber
+    best_loss_iter = 0
+    absolute_best_acc = 0
+    absolute_best_acc_iter = 0
 
     single_batch = params['single_batch']
 
     for e in range(epochs):
 
         print("##Epoch", e, batch_size)
-        testing_counter = 0
         steps_per_epoch = int(x_train.shape[0] / base_batch_size)
         print("Steps per epoch:", steps_per_epoch)
         for i in range(steps_per_epoch):
@@ -360,17 +360,10 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                     # computing losses after fit makes more sense
                     # and seems to work better
                     losses = compute_losses(images, labels)
-
                     retry_images, retry_labels, _ = sample_by_loss(images, labels, k, losses)
 
                     assert len(retry_labels) == k
-                    model.fit(retry_images, retry_labels,
-                              batch_size=k,
-                              epochs=iteration+1,
-                              initial_epoch=iteration,
-                              verbose=1,
-                              shuffle=False,
-                              callbacks=train_callbacks)
+                    model_fit(retry_images, retry_labels, iteration)
                     sample_count += len(retry_labels)
                     iteration += 1
 
@@ -413,12 +406,12 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
             elif mode == CURIOSITY_FULL_MODE:
 
-                # does extra training with randomly selected samples
+                # does extra training with randomly selected difficult samples
                 # from the whole dataset
 
                 if single_batch:
 
-                    retry_images, retry_labels = sample_by_loss_from_full_dataset(k, False, params)
+                    retry_images, retry_labels = sample_by_loss_from_full_dataset(k, params)
 
                     joined_images = np.append(images, retry_images, axis=0)
                     joined_labels = np.append(labels, retry_labels, axis=0)
@@ -438,12 +431,10 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                     if soft_sampling == -1:
                         assert len(labels) == batch_size
                         fitted = model_fit(images, labels, iteration)
-                        sample_count += fitted
-                        iteration += 1
                     else:
                         fitted = fit_by_loss_from_full_dataset(batch_size, params, iteration)
-                        sample_count += fitted
-                        iteration += 1
+                    sample_count += fitted
+                    iteration += 1
 
                     # difficult batch
                     fitted = fit_by_loss_from_full_dataset(k, params, iteration)
@@ -558,64 +549,72 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
             real_epochs = sample_count / x_train.shape[0]  # number of iterations over the whole dataset
             print("Processed samples", sample_count, "elapsed:", time.time() - start, f"(Real epochs: {round(real_epochs, 2)})")
 
-            testing_counter += base_batch_size
             if i % VALIDATION_ITERATIONS == 0:
-                testing_counter = 0
                 print(f"Testing model... (iter_with_no_improvements: {iter_with_no_improvements}")
 
-                curr_loss, curr_acc = model.evaluate(x_test, y_test, callbacks=eval_callbacks)
-                print("loss_acc", curr_loss, curr_acc)
+                # eval training data too to make the charts (only a subset to speed it up)
+                indexes = np.arange(x_train.shape[0])
+                pool_idx = np.random.choice(indexes, size=len(y_test), replace=False)
+                x_train_sample = x_train[pool_idx].copy()
+                y_train_sample = y_train[pool_idx].copy()
+                train_loss, train_acc = model.evaluate(x_train_sample, y_train_sample)
+                print("training loss_acc", train_loss, train_acc)
 
-                smooth_size = 15 #25
-                smoothed_acc = np.mean(validation[-smooth_size:]) if len(validation) > smooth_size else np.mean(validation)
-                print("smoothed_acc", smoothed_acc, "curr_acc", curr_acc)
-                smoothed_acc_diff = (curr_acc - smoothed_acc) / smoothed_acc
-                print("smoothed_difference", smoothed_acc_diff * 100, "%", "smoothed_acc", smoothed_acc, "curr_acc", curr_acc)
-
-                for name, value in [("loss", curr_loss), ("accuracy", curr_acc),
-                                    ("smoothed_acc", smoothed_acc), ("smoothed_acc_diff", smoothed_acc_diff)]:
+                for name, value in [("training loss", train_loss), ("training accuracy", train_acc)]:
                     summary = tf.Summary()
                     summary_value = summary.value.add()
                     summary_value.simple_value = value.item()
                     summary_value.tag = name
-                    val_writer.add_summary(summary, iteration)  # or sample count?
-                val_writer.flush()
+                    logs_writer.add_summary(summary, iteration)
+                logs_writer.flush()
 
-                validation.append(curr_acc)
-                validation_by_sample_count.append((sample_count, curr_loss, curr_acc))
+                # eval test set
+                test_loss, test_acc = model.evaluate(x_test, y_test, callbacks=eval_callbacks)
+                print("test loss_acc", test_loss, test_acc)
 
-                if curr_acc > absolute_best_acc:
-                    absolute_best_acc = curr_acc
+                for name, value in [("test loss", test_loss), ("test accuracy", test_acc)]:
+                    summary = tf.Summary()
+                    summary_value = summary.value.add()
+                    summary_value.simple_value = value.item()
+                    summary_value.tag = name
+                    logs_writer.add_summary(summary, iteration)
+                logs_writer.flush()
+
+                validation.append(test_acc)
+                validation_by_sample_count.append((sample_count, test_loss, test_acc))
+
+                if test_acc > absolute_best_acc:
+                    absolute_best_acc = test_acc
+                    absolute_best_acc_iter = iteration
 
                 # early stop check
-                use_smoothed_acc=True
-                if use_smoothed_acc:
-                    early_stop_curr_acc = smoothed_acc
-                else:
-                    early_stop_curr_acc = curr_acc
+                early_stop_curr_loss = test_loss
 
-                perc_difference = (early_stop_curr_acc - best_acc) / best_acc
-                print("perc_difference", perc_difference * 100, "%", "best", best_acc, "curr", early_stop_curr_acc)
-                if perc_difference <= EARLY_STOP_TOLERANCE:
+                perc_difference = (early_stop_curr_loss - best_loss) / best_loss
+                print("testing loss perc_difference", perc_difference * 100, "%", "prev best_loss", best_loss, "curr loss", early_stop_curr_loss)
+                if perc_difference > EARLY_STOP_TOLERANCE:
                     iter_with_no_improvements += 1
                 else:
                     iter_with_no_improvements = 0
-                    best_acc = early_stop_curr_acc
-                    best_acc_iter = iteration
+                    best_loss = early_stop_curr_loss
+                    best_loss_iter = iteration
 
                 print("iter_with_no_improvements", iter_with_no_improvements)
 
                 if iter_with_no_improvements > EARLY_STOP_PATIENCE:
-                    best_accuracies.append((best_acc, best_acc_iter, time.time() - train_start))
+                    best_accuracies.append((absolute_best_acc, absolute_best_acc_iter, time.time() - train_start))
                     break
 
         if iter_with_no_improvements > EARLY_STOP_PATIENCE:
             break
 
+    if len(best_accuracies) == 0:   # no early stopping
+        best_accuracies.append((absolute_best_acc, absolute_best_acc_iter, time.time() - train_start))
+
     real_epochs = sample_count/x_train.shape[0]     # number of iterations over the whole dataset
     fprint("Total processed samples", sample_count,  "elapsed:", time.time() - train_start)
-    fprint("Best accuracy", best_acc, "at iteration", best_acc_iter, f"(Real epochs: {round(real_epochs, 2)})")
-    fprint(f"Absolute best: {absolute_best_acc}")
+    fprint("Best loss", best_loss, "at iteration", best_loss_iter, f"(Real epochs: {round(real_epochs, 2)})")
+    fprint("Best accuracy", absolute_best_acc, "at iteration", absolute_best_acc_iter, f"(Real epochs: {round(real_epochs, 2)})")
     return validation, validation_by_sample_count, best_accuracies
 
 
@@ -692,7 +691,7 @@ def sample_by_loss(images, labels, size, losses, soft_sampling=DEFAULT_SOFT_SAMP
 
 def fit_by_loss_from_full_dataset(batch_size, params, k_epoch, easiest=False):
 
-    retry_images, retry_labels = sample_by_loss_from_full_dataset(batch_size, easiest, params)
+    retry_images, retry_labels = sample_by_loss_from_full_dataset(batch_size, params)
 
     assert len(retry_labels) == batch_size
     fitted = model_fit(retry_images, retry_labels, k_epoch)
@@ -700,7 +699,7 @@ def fit_by_loss_from_full_dataset(batch_size, params, k_epoch, easiest=False):
     return fitted
 
 
-def sample_by_loss_from_full_dataset(batch_size, easiest, params):
+def sample_by_loss_from_full_dataset(batch_size, params, easiest=False):
 
     if batch_size == 0:
         return [], []
@@ -735,7 +734,7 @@ def fit_weights_mode(images, labels, scale_max, k_epoch):
     # norm
     # proc_losses /= np.sum(proc_losses)
 
-    # try to make it comparable to the other weights set
+    # try to make it comparable to the others weights set
     # proc_losses *= batch_size
 
     # temp
@@ -778,17 +777,18 @@ cur_comp_sb = [
         (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_50_sb', 'single_batch': True}),
         (CURIOSITY_FULL_MODE, 0.99, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_99_sb', 'single_batch': True})]
 
-fashion_comp = [(BASELINE, 0.33, {'dataset_ratio': 0.02, 'name': 'BL_FIX_33_2b', 'single_batch': False}),
-                (CURIOSITY_FULL_MODE, 0.33, {'dataset_ratio': 0.02, 'name': 'CF_FIX_33_2b', 'single_batch': False})]
+fashion_comp = [(BASELINE, 0.25, {'dataset_ratio': 0.02, 'name': 'BL_FIX_25_2b', 'single_batch': False}),
+                (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CF_FIX_25_2b', 'single_batch': False}),
+                (CURIOSITY_MODE, 0.25, {'name': 'CF_FIX_25_2b', 'single_batch': False})]
 
 baseline_runs = [(BASELINE, 0.25, {'name': 'BL_FIX_25_sb', 'single_batch': True}),
                  (BASELINE, 0.5, {'name': 'BL_FIX_50_sb', 'single_batch': True}),
                  (CURIOSITY_BASELINE, 0.25, {'dataset_ratio': 0.02, 'name': 'CBL_FIX_25_sb', 'single_batch': True}),
                  (CURIOSITY_BASELINE, 0.5, {'dataset_ratio': 0.02, 'name': 'CBL_FIX_50_sb', 'single_batch': True})]
 
-runs = fashion_comp
+runs = [(BASELINE, 0.25, {'name': 'BL_FIX_25_sb', 'single_batch': True})]
 
-base_batch_size = 100
+base_batch_size = 125
 
 notes = sys.argv[2]
 
@@ -830,7 +830,7 @@ for i, run in enumerate(runs):
         model = create_model()
 
         logdir = f"logs/{name}/{name}_{run_name}_avg_{ac}"
-        val_writer = tf.summary.FileWriter(logdir)
+        logs_writer = tf.summary.FileWriter(logdir)
 
         #tensorboard_callback = keras.callbacks.TensorBoard(log_dir=logdir)
         #eval_callbacks = [tensorboard_callback]
@@ -849,7 +849,7 @@ for i, run in enumerate(runs):
         avg_validations_by_sample_count.append(validation_by_sample_count)
         np.savetxt(f'{root}/data_{name}_{run_name}_{ac}_by_sample_count', validation_by_sample_count, delimiter=',')
 
-        val_writer.close()
+        logs_writer.close()
 
     min_len = min([len(x) for x in avg_validations])
     cut_avg_validations = [x[:min_len] for x in avg_validations]
@@ -872,7 +872,8 @@ for i, run in enumerate(runs):
     avg_val_writer.flush()
     avg_val_writer.close()
 
-    best_accuracies = np.asarray(best_accuracies)
+    print("best_accuracies", best_accuracies)
+    best_accuracies = np.asarray(best_accuracies).reshape(-1, 3)
     avg_acc = np.mean(best_accuracies[:, 0])
     avg_epoch = np.mean(best_accuracies[:, 1])
     avg_elapsed = np.mean(best_accuracies[:, 2])
