@@ -266,23 +266,23 @@ CURIOSITY_ALL_POOL_MODE = 'CURIOSITY_ALL_POOL_MODE'
 CURIOSITY_ALL_POOL_MODE_FIXED_SIZE = 'CURIOSITY_ALL_POOL_MODE_FIXED_SIZE'
 CURIOSITY_BASELINE_FULL_SAMPLE_FIXED_SIZE='CURIOSITY_BASELINE_FULL_SAMPLE_FIXED_SIZE'
 
-def train(mode, full_batch_size, curiosity_ratio=1, params=None):
+def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
     print(f"Mode {mode}, curiosity_ratio: {curiosity_ratio}")
 
     pool_images = None
     pool_labels = None
 
-    k = int(full_batch_size * curiosity_ratio)
+    k = int(base_batch_size * curiosity_ratio)
 
     if mode in [BASELINE, WEIGHTS_MODE]:
-        batch_size = full_batch_size + k
+        batch_size = base_batch_size + k
     elif mode in [CURIOSITY_ALL_POOL_MODE_FIXED_SIZE, CURIOSITY_BASELINE_FULL_SAMPLE_FIXED_SIZE]:
-        batch_size = full_batch_size - k
+        batch_size = base_batch_size - k
     elif mode in [ITER_MODE]:
-        batch_size = full_batch_size * params['ratio']    # comparable only with cr 1
+        batch_size = base_batch_size * params['ratio']    # comparable only with cr 1
     else:
-        batch_size = full_batch_size - k
+        batch_size = base_batch_size
 
     data_gen = data_generator_mnist(x_train, y_train, batch_size)
 
@@ -303,7 +303,7 @@ def train(mode, full_batch_size, curiosity_ratio=1, params=None):
 
         print("##Epoch", e, batch_size)
         testing_counter = 0
-        steps_per_epoch = int(x_train.shape[0] / full_batch_size)
+        steps_per_epoch = int(x_train.shape[0] / base_batch_size)
         print("Steps per epoch:", steps_per_epoch)
         for i in range(steps_per_epoch):
 
@@ -345,9 +345,9 @@ def train(mode, full_batch_size, curiosity_ratio=1, params=None):
                     if not compute_losses_once:
                         losses = compute_losses(images, labels)
 
-                    retry_images, retry_labels, _ = sample_by_loss(images, labels, full_batch_size, losses)
+                    retry_images, retry_labels, _ = sample_by_loss(images, labels, base_batch_size, losses)
 
-                    assert len(retry_labels) == full_batch_size
+                    assert len(retry_labels) == base_batch_size
                     model_fit(retry_images, retry_labels, iteration)
                     sample_count += len(retry_labels)
                     iteration += 1
@@ -510,16 +510,16 @@ def train(mode, full_batch_size, curiosity_ratio=1, params=None):
                 # use keras sample weights to make the most difficult
                 # samples more important
 
-                first_images = images[:full_batch_size]
-                first_labels = labels[:full_batch_size]
+                first_images = images[:base_batch_size]
+                first_labels = labels[:base_batch_size]
 
-                assert len(first_labels) == full_batch_size
+                assert len(first_labels) == base_batch_size
                 fitted = fit_weights_mode(first_images, first_labels, params['scale_max'], iteration)
                 sample_count += fitted
                 iteration += 1
 
-                second_images = images[full_batch_size:]
-                second_labels = labels[full_batch_size:]
+                second_images = images[base_batch_size:]
+                second_labels = labels[base_batch_size:]
 
                 assert len(second_labels) == k
                 fitted = fit_weights_mode(second_images, second_labels, params['scale_max'], iteration)
@@ -639,7 +639,7 @@ def train(mode, full_batch_size, curiosity_ratio=1, params=None):
             real_epochs = sample_count / x_train.shape[0]  # number of iterations over the whole dataset
             print("Processed samples", sample_count, "elapsed:", time.time() - start, f"(Real epochs: {round(real_epochs, 2)})")
 
-            testing_counter += full_batch_size
+            testing_counter += base_batch_size
             #if testing_counter > record_steps:
             if i % VALIDATION_ITERATIONS == 0:
                 testing_counter = 0
