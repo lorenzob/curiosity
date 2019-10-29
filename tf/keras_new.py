@@ -3,7 +3,11 @@
 
 """
 
-There are many modes so this can be confusing.
+Here is a brief summary of the different training modes.
+
+Right now the most interesting one is CURIOSITY_FULL_MODE. All these mode are directly comparable (when all run with
+single_batch or two batches).
+
 
 BASELINE
 Classic training, process the dataset sequentially.
@@ -11,9 +15,12 @@ Classic training, process the dataset sequentially.
 CURIOSITY_MODE
 This is the one described in the article. Pick a batch, train on it, compute losses, retrain on the most difficult
 subset of this same batch. This second batch is called "extra batch".
+This mode, like many others, can be run with "single_batch" or not (see below for the rationale for this).
 
 CURIOSITY_BASELINE
-Just like CURIOSITY_MODE but the extra batch is randomly selected from the first batch.
+Just like CURIOSITY_MODE but the extra batch is randomly selected from the first batch. This mode exists only as a
+strict baseline for CURIOSITY_MODE. It does not make sense to use it in any other way. This mode should perform worse
+than BASELINE. If CURIOSITY_MODE performs better than BASELINE it means it also overcomes for this disadvantage.
 
 CURIOSITY_POOL_MODE
 It keeps a pool of the most difficult samples encountered in each batch. Like CURIOSITY_MODE but extra batch is
@@ -27,7 +34,39 @@ It uses the samples weights. It picks a "normal" batch, compute the losses, and 
 weights and fits the batch with these params.
 
 NOTE: All modes fits the same number of items (batch_size+k) per iteration. Most modes can do this in a single fit
-call or with two fit calls. Obviously this is different as two calls mean two pass of training.
+call or with two fit calls.
+
+# Notes
+
+I think there are several sources of difference in the training (accuracy and speed) for a fixed dataset:
+	- amount of samples fitted
+	- amount of different samples fitted
+	- amount of backprop passes
+	- batch size
+	- samples weights
+	- difficulty of the samples (?)
+
+What I'm trying to isolate with the curiosity modes is the contribution of the last one.
+
+Dataset order is the same for each run, but differs for each average iteration.
+
+
+# Why "single_batch"
+Calling fit once with a large batch or twice with two "half" batches is obviously different as two calls mean two
+pass of back propagation. Some modes are naturally "single mode", CLASSIC, other are two steps modes. Having only two
+steps modes might be the most natural choice but this make dangerous to compare different curiosity ratios: calling fit
+twice with two batches of size 10 and 90 might be slightly different from two batches with sizes 50 and 50.
+
+Also, MAYBE, there is a slightly difference between one step and two steps. With on step the normal samples and the hard
+ones are "averaged" together during the backprop step, with two separate calls the hardest samples alone might have
+a strongest impact(?). I have no (reasonable) idea on how to isolate this difference (it might not even exist).
+
+So two steps is the most natural option but "single_batch" makes it easier to make some kind of comparisons.
+
+Note: there can be subtle differences between the same mode run in single or in "double" mode, for example with
+CURIOSITY_MODE the first call to fit alters the loss so the choice of the extra batch changes slightly.
+
+
 
 
 """
@@ -295,7 +334,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
             elif mode == CURIOSITY_MODE:
 
-                # does extra training with the most difficult
+                # does an extra training step with the most difficult
                 # samples from the batch
 
                 if single_batch:
@@ -374,7 +413,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
             elif mode == CURIOSITY_FULL_MODE:
 
-                # fit current batch, than fit the hardest samples
+                # does extra training with randomly selected samples
                 # from the whole dataset
 
                 if single_batch:
@@ -413,8 +452,8 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
             elif mode == CURIOSITY_POOL_MODE:
 
-                # does extra training with random samples
-                # from the pool of most difficult samples
+                # does extra training with randomly selected samples
+                # from the pool
 
                 # it seems like the best BASE_POOL_SIZE depends on the cr value
                 BASE_POOL_SIZE=params['pool_size']
@@ -520,7 +559,6 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
             print("Processed samples", sample_count, "elapsed:", time.time() - start, f"(Real epochs: {round(real_epochs, 2)})")
 
             testing_counter += base_batch_size
-            #if testing_counter > record_steps:
             if i % VALIDATION_ITERATIONS == 0:
                 testing_counter = 0
                 print(f"Testing model... (iter_with_no_improvements: {iter_with_no_improvements}")
@@ -788,6 +826,11 @@ runs = [#(CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_25
         (CURIOSITY_FULL_MODE, 0.99, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_99_sb', 'single_batch': True}),
         ]
 
+bl_runs = [#(CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_25_sb', 'single_batch': True}),
+        #(CURIOSITY_FULL_MODE, 0.75, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_75_sb', 'single_batch': True}),
+        (BASELINE, 0.01, {'name': 'BL_FIX_01_sb', 'single_batch': True}),
+        (CURIOSITY_BASELINE, 0.25, {'dataset_ratio': 0.02, 'name': 'CBL_FIX_25_sb', 'single_batch': True}),
+        (CURIOSITY_BASELINE, 0.5, {'dataset_ratio': 0.02, 'name': 'CBL_FIX_50_sb', 'single_batch': True})]
 
 base_batch_size = 100
 
