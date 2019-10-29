@@ -289,7 +289,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
     k = int(base_batch_size * curiosity_ratio)
 
     if mode in [BASELINE, WEIGHTS_MODE]:
-        batch_size = base_batch_size + k
+        batch_size = base_batch_size
     else:
         batch_size = base_batch_size - k
 
@@ -328,7 +328,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                     sample_count += fitted
                     iteration += 1
                 else:
-                    fitted, iterations = fit_batch_in_two_steps(images, labels, batch_size, k, iteration)
+                    fitted = fit_batch_in_two_steps(images, labels, batch_size-k, k, iteration)
                     sample_count += fitted
                     iteration += 2
 
@@ -778,8 +778,8 @@ cur_comp_sb = [
         (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_50_sb', 'single_batch': True}),
         (CURIOSITY_FULL_MODE, 0.99, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_99_sb', 'single_batch': True})]
 
-fashion_comp = [(BASELINE, 0.25, {'dataset_ratio': 0.02, 'name': 'BL_FIX_25_tb', 'single_batch': False}),
-                (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CF_FIX_25_tb', 'single_batch': False})]
+fashion_comp = [(BASELINE, 0.33, {'dataset_ratio': 0.02, 'name': 'BL_FIX_33_2b', 'single_batch': False}),
+                (CURIOSITY_FULL_MODE, 0.33, {'dataset_ratio': 0.02, 'name': 'CF_FIX_33_2b', 'single_batch': False})]
 
 baseline_runs = [(BASELINE, 0.25, {'name': 'BL_FIX_25_sb', 'single_batch': True}),
                  (BASELINE, 0.5, {'name': 'BL_FIX_50_sb', 'single_batch': True}),
@@ -795,10 +795,11 @@ notes = sys.argv[2]
 fprint(f"##### NAME: {name}")
 
 for i in range(100):
-    src_bak_name = f"data/{name}/{sys.argv[0]}_{i}"
+    src_bak_name = f"data/{name}/{os.path.basename(sys.argv[0])}_{i}"
     if not os.path.exists(src_bak_name):
         shutil.copy(sys.argv[0], src_bak_name)
         fprint("Saved backup source file as", src_bak_name)
+        break
 
 fprint(f"NOTES: {notes}")
 fprint(f"PARAMS: SEED {SEED}, DEFAULT_SOFT_SAMPLING {DEFAULT_SOFT_SAMPLING}, shuffle {shuffle}")
