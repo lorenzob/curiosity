@@ -19,16 +19,12 @@ CURIOSITY_POOL_MODE
 It keeps a pool of the most difficult samples encountered in each batch. Like CURIOSITY_MODE but extra batch is
 randomly sampled from the pool.
 
-CURIOSITY_ALL_POOL_MODE
+CURIOSITY_FULL_MODE
 Like CURIOSITY_MODE but the extra batch is randomly sampled from the hardest samples of the whole dataset.
 
 WEIGHTS_MODE
 It uses the samples weights. It picks a "normal" batch, compute the losses, and map the losses to samples
 weights and fits the batch with these params.
-
-ALL_POOL_MODE
-Treats the whole dataset as a pool. Randomly pick a very large subset of the dataset. From this one selects
-the most difficult subset and fits on this.
 
 NOTE: All modes fits the same number of items (batch_size+k) per iteration. Most modes can do this in a single fit
 call or with two fit calls. Obviously this is different as two calls mean two pass of training.
@@ -240,10 +236,9 @@ CURIOSITY_BASELINE = 'CURIOSITY_BASELINE'
 
 CURIOSITY_MODE = 'CURIOSITY_MODE'
 CURIOSITY_POOL_MODE = 'CURIOSITY_POOL_MODE'
-CURIOSITY_ALL_POOL_MODE = 'CURIOSITY_ALL_POOL_MODE'
+CURIOSITY_FULL_MODE = 'CURIOSITY_FULL_MODE'
 
 WEIGHTS_MODE = 'WEIGHTS_MODE'  # keras sample weights based on loss
-ALL_POOL_MODE = 'ALL_POOL_MODE'
 
 def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
@@ -298,21 +293,86 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                     sample_count += sample_count
                     iteration += iterations
 
-            elif mode == ALL_POOL_MODE:
+            elif mode == CURIOSITY_MODE:
 
-                # finds the worst samples from the whole dataset
-                # i.e. use the whole dataset as pool
-                # (yes, this is going to be slow...)
-                # This model doe not use the current batch in any way
-                fitted = fit_all_pool(batch_size, params, iteration)
-                sample_count += fitted
-                iteration += 1
+                # does extra training with the most difficult
+                # samples from the batch
 
-                fitted = fit_all_pool(k, params, iteration)
-                sample_count += fitted
-                iteration += 1
+                if single_batch:
+                    losses = compute_losses(images, labels)
 
-            elif mode == CURIOSITY_ALL_POOL_MODE:
+                    retry_images, retry_labels, _ = sample_by_loss(images, labels, k, losses)
+
+                    joined_images = np.append(images, retry_images, axis=0)
+                    joined_labels = np.append(labels, retry_labels, axis=0)
+
+                    assert len(joined_labels) == batch_size + k
+                    fitted = model_fit(joined_images, joined_labels, iteration)
+                    sample_count += fitted
+                    iteration += 1
+
+                else:
+
+                    assert len(labels) == batch_size
+                    fitted = model_fit(images, labels, iteration)
+                    sample_count += fitted
+                    iteration += 1
+
+                    # computing losses after fit makes more sense
+                    # and seems to work better
+                    losses = compute_losses(images, labels)
+
+                    retry_images, retry_labels, _ = sample_by_loss(images, labels, k, losses)
+
+                    assert len(retry_labels) == k
+                    model.fit(retry_images, retry_labels,
+                              batch_size=k,
+                              epochs=iteration+1,
+                              initial_epoch=iteration,
+                              verbose=1,
+                              shuffle=False,
+                              callbacks=train_callbacks)
+                    sample_count += len(retry_labels)
+                    iteration += 1
+
+            elif mode == CURIOSITY_BASELINE:
+
+                # does extra training with randomly selected samples
+                # from the same batch
+                if single_batch:
+
+                    indexes = np.arange(batch_size)
+                    retry_idx = np.random.choice(indexes, size=k, replace=False)
+                    retry_images = images[retry_idx]
+                    retry_labels = labels[retry_idx]
+
+                    joined_images = np.append(images, retry_images, axis=0)
+                    joined_labels = np.append(labels, retry_labels, axis=0)
+
+                    assert len(joined_labels) == batch_size + k
+                    fitted = model_fit(joined_images, joined_labels, iteration)
+                    sample_count += fitted
+                    iteration += 1
+
+                else:
+
+                    assert len(labels) == batch_size
+                    fitted = model_fit(images, labels, iteration)
+                    sample_count += fitted
+                    iteration += 1
+
+                    # retrain with random samples
+                    indexes = np.arange(batch_size)
+                    retry_idx = np.random.choice(indexes, size=k, replace=False)
+                    retry_images = images[retry_idx]
+                    retry_labels = labels[retry_idx]
+
+                    assert len(retry_labels) == k
+                    fitted = model_fit(retry_images, retry_labels, iteration)
+                    sample_count += fitted
+                    iteration += 1
+
+            elif mode == CURIOSITY_FULL_MODE:
 
                 # fit current batch, than fit the hardest samples
                 # from the whole dataset
@@ -331,7 +391,10 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
                 else:
 
-                    # here no soft_sampling means to use current batch
+                    # here no soft_sampling means to use current batch rather
+                    # than do a random sampling (is closer to the original idea
+                    # and it avoids the miniscule risk of going over the same
+                    # elements too much)
                     soft_sampling = params.get('soft_sampling', -1)
                     if soft_sampling == -1:
                         assert len(labels) == batch_size
@@ -339,12 +402,12 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                         sample_count += fitted
                         iteration += 1
                     else:
-                        fitted = fit_all_pool(batch_size, params, iteration)
+                        fitted = fit_by_loss_from_full_dataset(batch_size, params, iteration)
                         sample_count += fitted
                         iteration += 1
 
                     # difficult batch
-                    fitted = fit_all_pool(k, params, iteration)
+                    fitted = fit_by_loss_from_full_dataset(k, params, iteration)
                     sample_count += fitted
                     iteration += 1
 
@@ -447,69 +510,6 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
                 assert len(second_labels) == k
                 fitted = fit_weights_mode(second_images, second_labels, params['scale_max'], iteration)
-                sample_count += fitted
-                iteration += 1
-
-
-            elif mode == CURIOSITY_MODE:
-
-                # does extra training with the most difficult
-                # samples from the batch
-
-                if single_batch:
-                    losses = compute_losses(images, labels)
-
-                    retry_images, retry_labels, _ = sample_by_loss(images, labels, k, losses)
-
-                    joined_images = np.append(images, retry_images, axis=0)
-                    joined_labels = np.append(labels, retry_labels, axis=0)
-
-                    assert len(joined_labels) == batch_size + k
-                    fitted = model_fit(joined_images, joined_labels, iteration)
-                    sample_count += fitted
-                    iteration += 1
-
-                else:
-
-                    assert len(labels) == batch_size
-                    fitted = model_fit(images, labels, iteration)
-                    sample_count += fitted
-                    iteration += 1
-
-                    # computing losses after fit makes more sense
-                    # and seems to work better
-                    losses = compute_losses(images, labels)
-
-                    retry_images, retry_labels, _ = sample_by_loss(images, labels, k, losses)
-
-                    assert len(retry_labels) == k
-                    model.fit(retry_images, retry_labels,
-                              batch_size=k,
-                              epochs=iteration+1,
-                              initial_epoch=iteration,
-                              verbose=1,
-                              shuffle=False,
-                              callbacks=train_callbacks)
-                    sample_count += len(retry_labels)
-                    iteration += 1
-
-            elif mode == CURIOSITY_BASELINE:
-
-                # does extra training with randomly selected samples
-                # from the whole dataset
-                assert len(labels) == batch_size
-                fitted = model_fit(images, labels, iteration)
-                sample_count += fitted
-                iteration += 1
-
-                # retrain in the hard samples
-                indexes = np.arange(batch_size)
-                retry_idx = np.random.choice(indexes, size=k, replace=False)
-                retry_images = images[retry_idx]
-                retry_labels = labels[retry_idx]
-
-                assert len(retry_labels) == k
-                fitted = model_fit(retry_images, retry_labels, iteration)
                 sample_count += fitted
                 iteration += 1
 
@@ -653,7 +653,7 @@ def sample_by_loss(images, labels, size, losses, soft_sampling=DEFAULT_SOFT_SAMP
         return retry_images, retry_labels, sub_losses[sub_choice_idx]
 
 
-def fit_all_pool(batch_size, params, k_epoch, easiest=False):
+def fit_by_loss_from_full_dataset(batch_size, params, k_epoch, easiest=False):
 
     retry_images, retry_labels = sample_by_loss_from_full_dataset(batch_size, easiest, params)
 
@@ -664,6 +664,9 @@ def fit_all_pool(batch_size, params, k_epoch, easiest=False):
 
 
 def sample_by_loss_from_full_dataset(batch_size, easiest, params):
+
+    if batch_size == 0:
+        return [], []
 
     soft_sampling = params.get('soft_sampling', 0)
     pool_size = int(x_train.shape[0] * params['dataset_ratio'])
@@ -738,7 +741,6 @@ all_runs = [
         (CURIOSITY_MODE, 1, {}),
         (CURIOSITY_BASELINE, 1, {}),
         (BASELINE, 1, {'single_batch': False}),
-        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.02}),
         (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
         (WEIGHTS_MODE, 1, {'scale_max': 100})]
 
@@ -752,17 +754,8 @@ runs = [(BASELINE, 1, {'single_batch': False}),
 #runs = [(ALL_POOL_MODE, 1, {'dataset_ratio': 0.1}),
 #        (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5})]
 
-runs = [
-        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.002}),
-        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.005}),
-        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.01}),
-        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.02}),
-        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.03}),
-        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.05})]
-
 runs = [(BASELINE, 1, {'single_batch': False}),
         (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.0}),
         (WEIGHTS_MODE, 1, {'scale_max': 100})]
 
 runs = [(BASELINE, 1, {'single_batch': False}),
@@ -777,42 +770,23 @@ runs = [(CURIOSITY_BASELINE, 0.25, {}),
 
 runs = [(BASELINE, 1, {'single_batch': False}),
         (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (ALL_POOL_MODE, 1, {'dataset_ratio': 0.01}),
         (WEIGHTS_MODE, 1, {'scale_max': 100})]
 
 runs = [(BASELINE, 1, {'single_batch': False}),
         (CURIOSITY_MODE, 0.25, {}),
         (CURIOSITY_POOL_MODE, 0.25, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02})]
+        (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02})]
 
 runs = [#(CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
-        #(CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02}),
-        (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'soft_sampling': 8})]
+        #(CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02}),
+        (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'soft_sampling': 8})]
 
-runs = [#(CURIOSITY_ALL_POOL_MODE, 0.1, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_10_sb', 'single_batch': True})
-        (CURIOSITY_ALL_POOL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_25_sb', 'single_batch': True}),
-        #(CURIOSITY_ALL_POOL_MODE, 0.5, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_50_sb', 'single_batch': True}),
-        (CURIOSITY_ALL_POOL_MODE, 0.75, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_75_sb', 'single_batch': True}),
-        #(CURIOSITY_ALL_POOL_MODE, 0.9, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_90_sb', 'single_batch': True}),
-        #(ALL_POOL_MODE, 1, {'dataset_ratio': 0.02, 'name': 'AP_FIX_100', 'single_batch': False})
+runs = [#(CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_25_sb', 'single_batch': True}),
+        #(CURIOSITY_FULL_MODE, 0.75, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_75_sb', 'single_batch': True}),
+        (CURIOSITY_FULL_MODE, 0.01, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_01_sb', 'single_batch': True}),
+        (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_50_sb', 'single_batch': True}),
+        (CURIOSITY_FULL_MODE, 0.99, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_99_sb', 'single_batch': True}),
         ]
-
-#runs = [(CURIOSITY_BASELINE_FULL_SAMPLE_FIXED_SIZE, 0.25, {'name': 'BLF_FIX_25'}),
-#        (CURIOSITY_BASELINE_FULL_SAMPLE_FIXED_SIZE, 0.5, {'name': 'BLF_FIX_50'})]
-
-
-#runs = [(ALL_POOL_MODE, 1, {'dataset_ratio': 0.02})]
-
-#runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1, {})]
-
-#runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1, {}), (WEIGHTS_MODE, 1, {'scale_max': 100})]
-
-#runs = [(BASELINE, 1, {}), (CURIOSITY_BASELINE, 1, {}), (CURIOSITY_BASELINE_FULL_SAMPLE, 1, {}),
-#        (CURIOSITY_MODE, 1, {}), (CURIOSITY_MODE_SINGLE_BATCH, 1, {})]
-
-#runs = [(CURIOSITY_MODE, 0.1, {}), (CURIOSITY_MODE, 0.2, {}), (CURIOSITY_MODE, 0.3, {}), (CURIOSITY_MODE, 0.4, {}),
-#        (CURIOSITY_MODE, 0.5, {}), (CURIOSITY_MODE, 0.6, {}), (CURIOSITY_MODE, 0.7, {}), (CURIOSITY_MODE, 0.8, {}),
-#        (CURIOSITY_MODE, 0.9, {}), (CURIOSITY_MODE, 1, {}),]
 
 
 base_batch_size = 100
