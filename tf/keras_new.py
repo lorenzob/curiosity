@@ -161,7 +161,7 @@ def data_generator_mnist(X, y, batchSize):
 img_rows, img_cols = 28, 28
 
 # the data, split between train and test sets
-use_mnist = True
+use_mnist = not True
 if use_mnist:
     fprint("Dataset MNIST")
     (x_train, y_train), (x_test, y_test) = mnist.load_data()
@@ -328,9 +328,9 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                     sample_count += fitted
                     iteration += 1
                 else:
-                    sample_count, iterations = fit_batch_split_in_two_steps(images, labels, batch_size, k, iteration)
-                    sample_count += sample_count
-                    iteration += iterations
+                    fitted, iterations = fit_batch_in_two_steps(images, labels, batch_size, k, iteration)
+                    sample_count += fitted
+                    iteration += 2
 
             elif mode == CURIOSITY_MODE:
 
@@ -619,7 +619,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
     return validation, validation_by_sample_count, best_accuracies
 
 
-def fit_batch_split_in_two_steps(images, labels, batch_size, k, iteration):
+def fit_batch_in_two_steps(images, labels, batch_size, k, iteration):
 
     new_sample_count = 0
 
@@ -636,8 +636,7 @@ def fit_batch_split_in_two_steps(images, labels, batch_size, k, iteration):
     new_sample_count += fitted
 
     assert new_sample_count == (batch_size + k)
-    iterations = 2
-    return new_sample_count, iterations
+    return new_sample_count
 
 
 def model_fit(images, labels, k_epoch):
@@ -772,73 +771,35 @@ def compute_losses(images, labels):
     losses = loss_func([images, labels])[0]
     return losses
 
-#runs = [(CURIOSITY_MODE, 0.25, {}), (CURIOSITY_BASELINE, 0.25, {})]
-
-all_runs = [
-        (BASELINE, 1, {}),
-        (CURIOSITY_MODE, 1, {}),
-        (CURIOSITY_BASELINE, 1, {}),
-        (BASELINE, 1, {'single_batch': False}),
-        (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (WEIGHTS_MODE, 1, {'scale_max': 100})]
-
-
-runs = [(BASELINE, 1, {'single_batch': False}),
-        (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (WEIGHTS_MODE, 1, {'scale_max': 100})]
-
-#runs = [(CURIOSITY_BASELINE_FULL_SAMPLE, 1, {})]
-
-#runs = [(ALL_POOL_MODE, 1, {'dataset_ratio': 0.1}),
-#        (POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5})]
-
-runs = [(BASELINE, 1, {'single_batch': False}),
-        (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (WEIGHTS_MODE, 1, {'scale_max': 100})]
-
-runs = [(BASELINE, 1, {'single_batch': False}),
-        (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5})]
-
-runs = [(CURIOSITY_BASELINE, 0.25, {}),
-        (BASELINE, 1, {'single_batch': False}),
-        (CURIOSITY_MODE, 0.25, {})]
-
-runs = [(BASELINE, 1, {'single_batch': False}),
-        (CURIOSITY_POOL_MODE, 1, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (WEIGHTS_MODE, 1, {'scale_max': 100})]
-
-runs = [(BASELINE, 1, {'single_batch': False}),
-        (CURIOSITY_MODE, 0.25, {}),
-        (CURIOSITY_POOL_MODE, 0.25, {'pool_size': 100 * 10, 'pool_max_size_factor': 1.5}),
-        (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02})]
-
-runs = [#(CURIOSITY_BASELINE_FULL_SAMPLE, 0.25, {}),
-        #(CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02}),
-        (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'soft_sampling': 8})]
-
-runs = [#(CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_25_sb', 'single_batch': True}),
-        #(CURIOSITY_FULL_MODE, 0.75, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_75_sb', 'single_batch': True}),
+cur_comp_sb = [
         (CURIOSITY_FULL_MODE, 0.01, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_01_sb', 'single_batch': True}),
+        (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_25_sb', 'single_batch': True}),
+        (CURIOSITY_FULL_MODE, 0.75, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_75_sb', 'single_batch': True}),
         (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_50_sb', 'single_batch': True}),
-        (CURIOSITY_FULL_MODE, 0.99, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_99_sb', 'single_batch': True}),
-        ]
+        (CURIOSITY_FULL_MODE, 0.99, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_99_sb', 'single_batch': True})]
 
-bl_runs = [#(CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_25_sb', 'single_batch': True}),
-        #(CURIOSITY_FULL_MODE, 0.75, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_75_sb', 'single_batch': True}),
-        (BASELINE, 0.01, {'name': 'BL_FIX_01_sb', 'single_batch': True}),
-        (CURIOSITY_BASELINE, 0.25, {'dataset_ratio': 0.02, 'name': 'CBL_FIX_25_sb', 'single_batch': True}),
-        (CURIOSITY_BASELINE, 0.5, {'dataset_ratio': 0.02, 'name': 'CBL_FIX_50_sb', 'single_batch': True})]
+fashion_comp = [(BASELINE, 0.25, {'dataset_ratio': 0.02, 'name': 'BL_FIX_25_tb', 'single_batch': False}),
+                (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CF_FIX_25_tb', 'single_batch': False})]
+
+baseline_runs = [(BASELINE, 0.25, {'name': 'BL_FIX_25_sb', 'single_batch': True}),
+                 (BASELINE, 0.5, {'name': 'BL_FIX_50_sb', 'single_batch': True}),
+                 (CURIOSITY_BASELINE, 0.25, {'dataset_ratio': 0.02, 'name': 'CBL_FIX_25_sb', 'single_batch': True}),
+                 (CURIOSITY_BASELINE, 0.5, {'dataset_ratio': 0.02, 'name': 'CBL_FIX_50_sb', 'single_batch': True})]
+
+runs = fashion_comp
 
 base_batch_size = 100
 
 notes = sys.argv[2]
 
-shutil.copy(sys.argv[0], "data/" + name)
+fprint(f"##### NAME: {name}")
 
-fprint(f"NAME: {name}")
+for i in range(100):
+    src_bak_name = f"data/{name}/{sys.argv[0]}_{i}"
+    if not os.path.exists(src_bak_name):
+        shutil.copy(sys.argv[0], src_bak_name)
+        fprint("Saved backup source file as", src_bak_name)
+
 fprint(f"NOTES: {notes}")
 fprint(f"PARAMS: SEED {SEED}, DEFAULT_SOFT_SAMPLING {DEFAULT_SOFT_SAMPLING}, shuffle {shuffle}")
 fprint(f"PARAMS: EARLY_STOP_PATIENCE {EARLY_STOP_PATIENCE}, EARLY_STOP_TOLERANCE {EARLY_STOP_TOLERANCE}")
