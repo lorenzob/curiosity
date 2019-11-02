@@ -72,6 +72,8 @@ CURIOSITY_MODE the first call to fit alters the loss so the choice of the extra 
 
 """
 
+from keras import Sequential, Model, regularizers
+from keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense, Activation, BatchNormalization, MaxPool2D
 
 import os
 import random
@@ -86,8 +88,6 @@ from keras import backend as K, Input
 import numpy as np
 
 import tensorflow as tf
-
-from tf.models import create_model
 
 num_classes = 10
 # default: 3, 2
@@ -199,6 +199,144 @@ y_test = keras.utils.to_categorical(y_test, num_classes)
 x_train = x_train
 y_train = y_train
 
+
+def create_simple_model():
+
+    fprint("Base model")
+
+    model = Sequential()
+    model.add(Conv2D(32, kernel_size=(3, 3),
+                     activation='relu',
+                     input_shape=input_shape))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
+    model.add(Flatten())
+    model.add(Dense(128, activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(num_classes))
+    model.add(Activation('softmax'))
+
+    return model
+
+def create_MobileNetV2_model():
+
+    base_model = keras.applications.mobilenet_v2.MobileNetV2(input_shape=input_shape,include_top=False,
+                                                             weights='imagenet',
+                                                             classes=10)
+    x = base_model.output
+    x = Flatten()(x)
+    x = Dense(256, activation='relu')(x)
+    predictions = Dense(10, activation='softmax')(x)
+
+    model = Model(input=base_model.input, output=predictions)
+
+    for i, layer in enumerate(model.layers):
+        print(i, layer.name)
+
+    for layer in model.layers[:20]:
+        layer.trainable = False
+    for layer in model.layers[20:]:
+        layer.trainable = True
+
+    return model
+
+
+def create_Adv2_model():
+
+    # https://appliedmachinelearning.blog/2018/03/24/achieving-90-accuracy-in-object-recognition-task-on-cifar-10-dataset-with-keras-convolutional-neural-networks/
+
+    weight_decay = 1e-4
+    model = Sequential()
+    model.add(Conv2D(32, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay),
+                     input_shape=input_shape.shape[1:]))
+    model.add(Activation('elu'))
+    model.add(BatchNormalization())
+    model.add(Conv2D(32, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay)))
+    model.add(Activation('elu'))
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.2))
+
+    model.add(Conv2D(64, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay)))
+    model.add(Activation('elu'))
+    model.add(BatchNormalization())
+    model.add(Conv2D(64, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay)))
+    model.add(Activation('elu'))
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.3))
+
+    model.add(Conv2D(128, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay)))
+    model.add(Activation('elu'))
+    model.add(BatchNormalization())
+    model.add(Conv2D(128, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay)))
+    model.add(Activation('elu'))
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.4))
+
+    model.add(Flatten())
+    model.add(Dense(num_classes, activation='softmax'))
+
+    return model
+
+#https://www.kaggle.com/yassineghouzam/introduction-to-cnn-keras-0-997-top-6
+def create_adv_model():
+
+    # also try:
+    # https://www.kaggle.com/elcaiseri/mnist-simple-cnn-keras-accuracy-0-99-top-1
+
+    fprint("Advanced model")
+
+    model = Sequential()
+
+    model.add(Conv2D(filters=32, kernel_size=(5, 5), padding='Same',
+                     activation='relu', input_shape=input_shape))
+    model.add(Conv2D(filters=32, kernel_size=(5, 5), padding='Same',
+                     activation='relu'))
+    model.add(MaxPool2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
+
+    model.add(Conv2D(filters=64, kernel_size=(3, 3), padding='Same',
+                     activation='relu'))
+    model.add(Conv2D(filters=64, kernel_size=(3, 3), padding='Same',
+                     activation='relu'))
+    model.add(MaxPool2D(pool_size=(2, 2), strides=(2, 2)))
+    model.add(Dropout(0.25))
+
+    model.add(Flatten())
+    model.add(Dense(256, activation="relu"))
+    model.add(Dropout(0.5))
+    model.add(Dense(10, activation="softmax"))
+
+    return model
+
+
+def create_model():
+
+    learning_rate=0.001
+    fprint("learning_rate", learning_rate)
+
+    model_name = "SIMPLE"
+    fprint("model_name", model_name)
+    if model_name == "SIMPLE":
+        model = create_simple_model()
+    elif model_name == "ADV":
+        model = create_adv_model()
+    elif model_name == "ADV2":
+        model = create_Adv2_model()
+    elif model_name == "MOBILENET":
+        model = create_MobileNetV2_model()
+        learning_rate = 0.0001
+
+    model.compile(loss=keras.losses.categorical_crossentropy,
+                  optimizer=keras.optimizers.Adam(lr=learning_rate),
+                  metrics=['accuracy'])
+
+    model.summary()
+
+    return model
 
 def scale(value, fromMin, fromMax, toMin, toMax):
 
@@ -905,12 +1043,23 @@ mnist_consume_2b_p500 = [(CURIOSITY_CONSUME_MODE, 0.5, {'name': 'mc_CONS_50_2b_p
                     (CURIOSITY_CONSUME_MODE, 0.75, {'name': 'mc_CONS_75_2b_p500', 'pool_size': 500}),
                     (CURIOSITY_CONSUME_MODE, 0.99, {'name': 'mc_CONS_99_2b_p500', 'pool_size': 500})]
 
-model_check_2b_50 = [(BASELINE, 0.50, {'name': 'fasA_BL_50_2b', 'single_batch': False}),
-                    (CURIOSITY_FULL_MODE, 0.50, {'name': 'fasA_CFM_50_2b', 'dataset_ratio': 0.02, 'single_batch': False})]
+full_comp_sb = [(BASELINE, 0.50, {'name': 'full_comp_sb_BL', 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.01, {'name': 'full_comp_sb_1', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.05, {'name': 'full_comp_sb_5', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.10, {'name': 'full_comp_sb_10', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.20, {'name': 'full_comp_sb_20', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.30, {'name': 'full_comp_sb_30', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.40, {'name': 'full_comp_sb_40', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.50, {'name': 'full_comp_sb_50', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.60, {'name': 'full_comp_sb_60', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.70, {'name': 'full_comp_sb_70', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.80, {'name': 'full_comp_sb_80', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.90, {'name': 'full_comp_sb_90', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_FULL_MODE, 0.99, {'name': 'full_comp_sb_100', 'dataset_ratio': 0.02, 'single_batch': True})]
 
 
 
-runs = model_check_2b_50
+runs = full_comp_sb
 
 base_batch_size = 125
 
