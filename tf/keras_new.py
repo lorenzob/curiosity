@@ -55,17 +55,18 @@ Dataset order is the same for each run, but differs for each average iteration.
 Calling fit once with a large batch or twice with two "half" batches is obviously different as two calls mean two
 pass of back propagation. Some modes are naturally "single mode", CLASSIC, others are two steps modes. Having only two
 steps modes might be the most natural choice but this make dangerous to compare different curiosity ratios: calling fit
-twice with two batches of size 10 and 90 might be slightly different from two batches with sizes 50 and 50.
+twice with two batches of size 10 and 90 might be different from two batches with sizes 50 and 50 (especially if the
+smaller batch is a difficult one).
 
 Also, MAYBE, there is a slightly difference between one step and two steps. With on step the normal samples and the hard
 ones are "averaged" together during the backprop step, with two separate calls the hardest samples alone might have
-a strongest impact(?). I have no (reasonable) idea on how to isolate this difference (it might not even exist).
+a strongest impact(?). I have no (reasonable) idea on how to isolate this difference.
 
-So two steps is the most natural option but "single_batch" makes it easier to make some kind of comparisons.
+So two steps is the most natural option but "single_batch" makes it easier to make some kind of comparisons. It also
+allows to use the same baseline for different tests.
 
 Note: there can be subtle differences between the same mode run in single or in "double" mode, for example with
 CURIOSITY_MODE the first call to fit alters the loss so the choice of the extra batch changes slightly.
-
 
 
 
@@ -79,15 +80,14 @@ import sys
 import time
 
 import keras
-from keras.datasets import mnist
-from keras.models import Sequential
-from keras.layers import Dense, Dropout, Flatten, Activation, MaxPool2D
-from keras.layers import Conv2D, MaxPooling2D
+from keras.datasets import mnist, cifar10
 from keras import backend as K, Input
 
 import numpy as np
 
 import tensorflow as tf
+
+from tf.models import create_model
 
 num_classes = 10
 # default: 3, 2
@@ -97,11 +97,11 @@ average_count = 3
 
 VALIDATION_ITERATIONS = 100
 
-EARLY_STOP_PATIENCE = 12
+EARLY_STOP_PATIENCE = 15
 EARLY_STOP_TOLERANCE = 0.1 / 100
 
 # debug settings
-quick_debug=False
+quick_debug= False
 if quick_debug:
     epochs = 2
     average_count = 2
@@ -122,7 +122,7 @@ def set_seed(seed):
 
 name = sys.argv[1]
 
-root=f"data/{name}"
+root=f"logs/{name}"
 os.makedirs(root, exist_ok=True)
 
 train_callbacks=[]
@@ -157,27 +157,31 @@ def data_generator_mnist(X, y, batchSize):
             i += batchSize
 
 
-# input image dimensions
-img_rows, img_cols = 28, 28
+# default input image dimensions
+img_rows, img_cols, channels = 28, 28, 1
 
 # the data, split between train and test sets
-use_mnist = not True
-if use_mnist:
-    fprint("Dataset MNIST")
+#dataset_name = 'CIFAR'
+dataset_name = 'MNIST'
+#dataset_name = 'Fashion'
+fprint("Dataset ", dataset_name)
+if dataset_name == 'MNIST':
     (x_train, y_train), (x_test, y_test) = mnist.load_data()
-else:
-    fprint("Dataset Fashion MNIST")
+elif dataset_name == 'Fashion':
     fashion_mnist = keras.datasets.fashion_mnist
     (x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
+elif dataset_name == 'CIFAR':
+    (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+    img_rows, img_cols, channels = 32, 32, 3
 
 if K.image_data_format() == 'channels_first':
-    x_train = x_train.reshape(x_train.shape[0], 1, img_rows, img_cols)
-    x_test = x_test.reshape(x_test.shape[0], 1, img_rows, img_cols)
-    input_shape = (1, img_rows, img_cols)
+    x_train = x_train.reshape(x_train.shape[0], channels, img_rows, img_cols)
+    x_test = x_test.reshape(x_test.shape[0], channels, img_rows, img_cols)
+    input_shape = (channels, img_rows, img_cols)
 else:
-    x_train = x_train.reshape(x_train.shape[0], img_rows, img_cols, 1)
-    x_test = x_test.reshape(x_test.shape[0], img_rows, img_cols, 1)
-    input_shape = (img_rows, img_cols, 1)
+    x_train = x_train.reshape(x_train.shape[0], img_rows, img_cols, channels)
+    x_test = x_test.reshape(x_test.shape[0], img_rows, img_cols, channels)
+    input_shape = (img_rows, img_cols, channels)
 
 x_train = x_train.astype('float32')
 x_test = x_test.astype('float32')
@@ -195,67 +199,6 @@ y_test = keras.utils.to_categorical(y_test, num_classes)
 x_train = x_train
 y_train = y_train
 
-def create_model():
-
-    fprint("Base model")
-
-    model = Sequential()
-    model.add(Conv2D(32, kernel_size=(3, 3),
-                     activation='relu',
-                     input_shape=input_shape))
-    model.add(Conv2D(64, (3, 3), activation='relu'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-    model.add(Flatten())
-    model.add(Dense(128, activation='relu'))
-    model.add(Dropout(0.5))
-    model.add(Dense(num_classes))
-    model.add(Activation('softmax'))
-
-    model.compile(loss=keras.losses.categorical_crossentropy,
-                  optimizer=keras.optimizers.Adam(),
-                  metrics=['accuracy'])
-
-    model.summary()
-
-    return model
-
-#https://www.kaggle.com/yassineghouzam/introduction-to-cnn-keras-0-997-top-6
-def create_adv_model():
-
-    # also try:
-    # https://www.kaggle.com/elcaiseri/mnist-simple-cnn-keras-accuracy-0-99-top-1
-
-    fprint("Advanced model")
-
-    model = Sequential()
-
-    model.add(Conv2D(filters=32, kernel_size=(5, 5), padding='Same',
-                     activation='relu', input_shape=(28, 28, 1)))
-    model.add(Conv2D(filters=32, kernel_size=(5, 5), padding='Same',
-                     activation='relu'))
-    model.add(MaxPool2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Conv2D(filters=64, kernel_size=(3, 3), padding='Same',
-                     activation='relu'))
-    model.add(Conv2D(filters=64, kernel_size=(3, 3), padding='Same',
-                     activation='relu'))
-    model.add(MaxPool2D(pool_size=(2, 2), strides=(2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Flatten())
-    model.add(Dense(256, activation="relu"))
-    model.add(Dropout(0.5))
-    model.add(Dense(10, activation="softmax"))
-
-    model.compile(loss=keras.losses.categorical_crossentropy,
-                  optimizer=keras.optimizers.Adam(),
-                  metrics=['accuracy'])
-
-    model.summary()
-
-    return model
 
 def scale(value, fromMin, fromMax, toMin, toMax):
 
@@ -279,6 +222,11 @@ CURIOSITY_FULL_MODE = 'CURIOSITY_FULL_MODE'
 
 WEIGHTS_MODE = 'WEIGHTS_MODE'  # keras sample weights based on loss
 
+# please ignore these, they are here only for sanity checks
+SWITCH_MODE = 'SWITCH_MODE'
+FULL_MODE='FULL_MODE'
+CURIOSITY_CONSUME_MODE='CURIOSITY_CONSUME_MODE'
+
 def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
     print(f"Mode {mode}, curiosity_ratio: {curiosity_ratio}")
@@ -288,15 +236,18 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
     k = int(base_batch_size * curiosity_ratio)
 
-    if mode in [BASELINE, WEIGHTS_MODE]:
+    if mode in [BASELINE, WEIGHTS_MODE, FULL_MODE, SWITCH_MODE]:
         batch_size = base_batch_size
     else:
         batch_size = base_batch_size - k
 
     data_gen = data_generator_mnist(x_train, y_train, batch_size)
 
+    warmup_iter = params.get('warmup_iter', 0)
+    print("warmup_iter", warmup_iter)
+
     validation = []
-    validation_by_sample_count = []
+    validation_by_iteration = []
     best_accuracies = []
     sample_count = 0
     train_start = time.time()
@@ -306,8 +257,10 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
     best_loss_iter = 0
     absolute_best_acc = 0
     absolute_best_acc_iter = 0
+    original_mode = mode
 
-    single_batch = params['single_batch']
+    single_batch = params.get('single_batch', False)
+    fprint("single_batch", single_batch)
 
     for e in range(epochs):
 
@@ -320,7 +273,35 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
             images, labels = next(data_gen)
 
-            if mode == BASELINE:
+            if original_mode == SWITCH_MODE:
+                if mode == SWITCH_MODE:
+                    mode = FULL_MODE    # it switches immediately
+                if i % params['switch_count'] == 0:
+                    mode = BASELINE if mode == FULL_MODE else FULL_MODE
+                    print("Switching mode to", mode)
+
+            if warmup_iter > 0 and iteration < warmup_iter:
+
+                print("Warmup", iteration, '/', warmup_iter, " - Next mode", mode)
+
+                if single_batch:
+                    #assert len(labels) == base_batch_size
+                    #fitted = model_fit(images, labels, iteration)
+                    #sample_count += fitted
+                    #iteration += 1
+                    raise Exception("Not supported")
+                else:
+                    # works only with cr 50
+                    fitted = model_fit(images, labels, iteration)
+                    sample_count += fitted
+                    iteration += 1
+
+                    images, labels = next(data_gen)
+                    fitted = model_fit(images, labels, iteration)
+                    sample_count += fitted
+                    iteration += 1
+
+            elif mode == BASELINE:
 
                 if single_batch:
                     assert len(labels) == batch_size
@@ -409,6 +390,54 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                     sample_count += fitted
                     iteration += 1
 
+            elif mode == CURIOSITY_CONSUME_MODE:
+
+                if single_batch:
+                    raise Exception("Not supported")
+                else:
+
+                    assert len(labels) == batch_size
+                    fitted = model_fit(images, labels, iteration)
+                    sample_count += fitted
+                    iteration += 1
+
+                    if pool_labels is None or len(pool_labels) < k:
+
+                        print("Filling pool, curr size: ", len(pool_labels) if pool_labels is not None else None)
+
+                        pool_size = params['pool_size']
+                        sub_images, sub_labels = dataset_random_subset(pool_size * 5)
+                        sub_losses = compute_losses(sub_images, sub_labels)
+
+                        #pool_soft_sampling = params.get('pool_soft_sampling', 0)
+                        pool_images, pool_labels, losses = sample_by_loss(sub_images, sub_labels, pool_size, sub_losses)
+
+                        print("New pool size: ", len(pool_labels))
+
+                    len_pre_sample = len(pool_labels)
+
+                    indexes = np.arange(pool_labels.shape[0])
+                    retry_idx = np.random.choice(indexes, size=k, replace=False)
+
+                    retry_images = pool_images[retry_idx]
+                    retry_labels = pool_labels[retry_idx]
+
+                    # consume the used images
+                    del_mask = np.ones(len(pool_labels), dtype=bool)
+                    del_mask[retry_idx] = False
+                    pool_images = pool_images[del_mask].copy()
+                    pool_labels = pool_labels[del_mask].copy()
+
+                    print("Pool size after sample: ", len(pool_labels))
+
+                    print(len(pool_labels) , (len_pre_sample - k))
+                    assert len(pool_labels) == (len_pre_sample - k)
+
+                    assert len(retry_labels) == k
+                    fitted = model_fit(retry_images, retry_labels, iteration)
+                    sample_count += fitted
+                    iteration += 1
+
             elif mode == CURIOSITY_FULL_MODE:
 
                 # does extra training with randomly selected difficult samples
@@ -445,6 +474,18 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                     fitted = fit_by_loss_from_full_dataset(k, params, iteration)
                     sample_count += fitted
                     iteration += 1
+
+            elif mode == FULL_MODE:
+
+                if single_batch:
+                    raise Exception("Not supported")
+                else:
+
+                    hard_images, hard_labels = sample_by_loss_from_full_dataset(batch_size, params)
+
+                    fitted = fit_batch_in_two_steps(hard_images, hard_labels, batch_size-k, k, iteration)
+                    sample_count += fitted
+                    iteration += 2
 
             elif mode == CURIOSITY_POOL_MODE:
 
@@ -552,7 +593,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 raise Exception("Unknown mode " + str(mode))
 
             real_epochs = sample_count / x_train.shape[0]  # number of iterations over the whole dataset
-            print("Processed samples", sample_count, "elapsed:", time.time() - start, f"(Real epochs: {round(real_epochs, 2)})")
+            print("Iteration", iteration, ", processed samples", sample_count, "elapsed:", time.time() - start, f"(Real epochs: {round(real_epochs, 2)})")
 
             if i % VALIDATION_ITERATIONS == 0:
                 print(f"Testing model... (iter_with_no_improvements: {iter_with_no_improvements}")
@@ -577,8 +618,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 test_loss, test_acc = model.evaluate(x_test, y_test, callbacks=eval_callbacks)
                 print("test loss_acc", test_loss, test_acc)
 
-                for name, value in [("loss", test_loss), ("accuracy", test_acc),
-                                    ("test loss", test_loss), ("test accuracy", test_acc)]:
+                for name, value in [("loss", test_loss), ("accuracy", test_acc)]:
                     summary = tf.Summary()
                     summary_value = summary.value.add()
                     summary_value.simple_value = value.item()
@@ -587,7 +627,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 test_writer.flush()
 
                 validation.append(test_acc)
-                validation_by_sample_count.append((sample_count, test_loss, test_acc))
+                validation_by_iteration.append((iteration, test_loss, test_acc))
 
                 if test_acc > absolute_best_acc:
                     absolute_best_acc = test_acc
@@ -618,10 +658,10 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
         best_accuracies.append((absolute_best_acc, absolute_best_acc_iter, time.time() - train_start))
 
     real_epochs = sample_count/x_train.shape[0]     # number of iterations over the whole dataset
-    fprint("Total processed samples", sample_count,  "elapsed:", time.time() - train_start)
+    fprint("Total processed samples", sample_count, "elapsed:", time.time() - train_start)
     fprint("Best loss", best_loss, "at iteration", best_loss_iter, f"(Real epochs: {round(real_epochs, 2)})")
     fprint("Best accuracy", absolute_best_acc, "at iteration", absolute_best_acc_iter, f"(Real epochs: {round(real_epochs, 2)})")
-    return validation, validation_by_sample_count, best_accuracies
+    return validation, validation_by_iteration, best_accuracies
 
 
 def fit_batch_in_two_steps(images, labels, batch_size, k, iteration):
@@ -710,18 +750,25 @@ def sample_by_loss_from_full_dataset(batch_size, params, easiest=False):
     if batch_size == 0:
         return [], []
 
-    soft_sampling = params.get('soft_sampling', 0)
     pool_size = int(x_train.shape[0] * params['dataset_ratio'])
 
-    # print("fit_all_pool", batch_size, pool_size)
+    pool_images, pool_labels = dataset_random_subset(pool_size)
+
+    losses = compute_losses(pool_images, pool_labels)
+
+    soft_sampling = params.get('soft_sampling', 0)
+    retry_images, retry_labels, _ = sample_by_loss(pool_images, pool_labels, batch_size, losses,
+                                                   soft_sampling=soft_sampling, easiest=easiest)
+    return retry_images, retry_labels
+
+
+def dataset_random_subset(pool_size):
+
     indexes = np.arange(x_train.shape[0])
     pool_idx = np.random.choice(indexes, size=pool_size, replace=False)
     pool_images = x_train[pool_idx].copy()
     pool_labels = y_train[pool_idx].copy()
-    losses = compute_losses(pool_images, pool_labels)
-    retry_images, retry_labels, _ = sample_by_loss(pool_images, pool_labels, batch_size, losses,
-                                                   soft_sampling=soft_sampling, easiest=easiest)
-    return retry_images, retry_labels
+    return pool_images, pool_labels
 
 
 def fit_weights_mode(images, labels, scale_max, k_epoch):
@@ -797,11 +844,73 @@ fashion_comp_ext = [(CURIOSITY_FULL_MODE, 0.1, {'dataset_ratio': 0.02, 'name': '
                    (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CF_FIX_25_2b_losses_first',
                                                 'single_batch': False, 'losses_first': True})]
 
-fashion_comp_sb = [(BASELINE, 0.25, {'dataset_ratio': 0.02, 'name': 'BL_FIX_25_sb', 'single_batch': True}),
-                   (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CF_FIX_25_sb', 'single_batch': True}),
-                   (CURIOSITY_MODE, 0.25, {'name': 'CF_FIX_25_sb', 'single_batch': True})]
+fashion_comp_ext2 = [(BASELINE, 0.5, {'name': 'BL_FIX_50_2b', 'single_batch': False}),
+                     (CURIOSITY_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CF_FIX_25_2b_losses_first',
+                                                  'single_batch': False, 'losses_first': True})]
 
-runs = fashion_comp_ext
+fashion_comp_sb = [(BASELINE, 0.5, {'dataset_ratio': 0.02, 'name': 'BL_FIX_50_sb', 'single_batch': True}),
+                   (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.02, 'name': 'CF_FIX_50_sb', 'single_batch': True}),
+                   (CURIOSITY_MODE, 0.5, {'name': 'CM_FIX_50_sb', 'single_batch': True})]
+
+cifar_comp = [(BASELINE, 0.5, {'dataset_ratio': 0.02, 'name': 'BL_50_2b'}),
+              (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.02, 'name': 'CF_50_2b'}),
+              (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.01, 'name': 'CF_50_2b_001'}),
+              (CURIOSITY_MODE, 0.3, {'name': 'CM_30_sb'})]
+
+cifar_comp_ext = [(BASELINE, 0.5, {'name': 'BL_50_2b_bis'}),
+              (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.01, 'name': 'CF_25_2b_001'}),
+              (CURIOSITY_FULL_MODE, 0.75, {'dataset_ratio': 0.01, 'name': 'CF_75_2b_001'})]
+
+
+#provare 4000/5000 o anche 2000
+cifar_comp_wup = [(CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.01, 'name': 'CF_25_2b_wu05k', 'warmup_iter': 500}),
+                  (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.01, 'name': 'CF_25_2b_wu1k', 'warmup_iter': 1000}),
+                  (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.01, 'name': 'CF_25_2b_wu2k', 'warmup_iter': 2000}),
+                  (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.01, 'name': 'CF_25_2b_wu4k', 'warmup_iter': 4000})]
+
+# retry without warmup, 5 avg
+cifar_comp_wup2 = [(BASELINE, 0.5, {'name': 'BL_50_2b_x2'}),
+                  (CURIOSITY_FULL_MODE, 0.5, {'dataset_ratio': 0.01, 'name': 'CF_25_2b_wu2k_x2', 'warmup_iter': 2000})]
+
+# todo
+comp_switch = [(SWITCH_MODE, 0.5, {'name': 'SW_50_2b_sw5', 'dataset_ratio': 0.02, 'switch_count': 5}),
+               (SWITCH_MODE, 0.5, {'name': 'SW_50_2b_sw10', 'dataset_ratio': 0.02, 'switch_count': 10}),
+               (SWITCH_MODE, 0.5, {'name': 'SW_50_2b_sw25', 'dataset_ratio': 0.02, 'switch_count': 25}),
+               (SWITCH_MODE, 0.5, {'name': 'SW_50_2b_sw50', 'dataset_ratio': 0.02, 'switch_count': 50}),
+               (SWITCH_MODE, 0.5, {'name': 'SW_50_2b_sw100', 'dataset_ratio': 0.02, 'switch_count': 100})]
+
+comp_switch = [(SWITCH_MODE, 0.25, {'name': 'SW_25_2b_sw25', 'dataset_ratio': 0.02, 'switch_count': 25}),
+               (SWITCH_MODE, 0.5, {'name': 'SW_50_2b_sw25', 'dataset_ratio': 0.02, 'switch_count': 25}),
+               (SWITCH_MODE, 0.75, {'name': 'SW_75_2b_sw25', 'dataset_ratio': 0.02, 'switch_count': 25})]
+
+mnist_check_sb = [(BASELINE, 0.25, {'name': 'mc_BL_25_sb', 'single_batch': True}),
+                  (CURIOSITY_FULL_MODE, 0.25, {'name': 'mc_CBL_FIX_25_sb', 'dataset_ratio': 0.02, 'single_batch': True}),
+                  (BASELINE, 0.5, {'name': 'mc_BL_50_sb', 'single_batch': True}),
+                  (CURIOSITY_FULL_MODE, 0.5, {'name': 'mc_CBL_FIX_50_sb', 'dataset_ratio': 0.02, 'single_batch': True})]
+
+mnist_check_2b = [(BASELINE, 0.25, {'name': 'mnA_BL_25_2b', 'single_batch': False}),
+                  (CURIOSITY_FULL_MODE, 0.25, {'name': 'mnA_CFM_25_2b', 'dataset_ratio': 0.02, 'single_batch': False}),
+                  (BASELINE, 0.33, {'name': 'mnA_BL_33_2b', 'single_batch': False}),
+                  (CURIOSITY_FULL_MODE, 0.33, {'name': 'mnA_CFM_33_2b', 'dataset_ratio': 0.02, 'single_batch': False}),
+                  (BASELINE, 0.5, {'name': 'mnA_BL_50_2b', 'single_batch': False}),
+                  (CURIOSITY_FULL_MODE, 0.5, {'name': 'mnA_CFM_50_2b', 'dataset_ratio': 0.02, 'single_batch': False})]
+
+# with zero does not work well probably because is sees the same items over and over
+mnist_full_2b = [(FULL_MODE, 0.5, {'name': 'mc_FM_50_2b', 'dataset_ratio': 0.045, 'single_batch': False, 'soft_sampling': 0}),
+                 (FULL_MODE, 0.5, {'name': 'mc_FM_50_2b', 'dataset_ratio': 0.045, 'single_batch': False, 'soft_sampling': 2}),
+                 (FULL_MODE, 0.5, {'name': 'mc_FM_50_2b', 'dataset_ratio': 0.045, 'single_batch': False, 'soft_sampling': 4})]
+
+#rifare single batch
+mnist_consume_2b_p500 = [(CURIOSITY_CONSUME_MODE, 0.5, {'name': 'mc_CONS_50_2b_p500', 'pool_size': 500}),
+                    (CURIOSITY_CONSUME_MODE, 0.75, {'name': 'mc_CONS_75_2b_p500', 'pool_size': 500}),
+                    (CURIOSITY_CONSUME_MODE, 0.99, {'name': 'mc_CONS_99_2b_p500', 'pool_size': 500})]
+
+model_check_2b_50 = [(BASELINE, 0.50, {'name': 'fasA_BL_50_2b', 'single_batch': False}),
+                    (CURIOSITY_FULL_MODE, 0.50, {'name': 'fasA_CFM_50_2b', 'dataset_ratio': 0.02, 'single_batch': False})]
+
+
+
+runs = model_check_2b_50
 
 base_batch_size = 125
 
@@ -810,7 +919,7 @@ notes = sys.argv[2]
 fprint(f"##### NAME: {name}")
 
 for i in range(100):
-    src_bak_name = f"data/{name}/{os.path.basename(sys.argv[0])}_{i}"
+    src_bak_name = f"logs/{name}/{os.path.basename(sys.argv[0])}_{i}"
     if not os.path.exists(src_bak_name):
         shutil.copy(sys.argv[0], src_bak_name)
         fprint("Saved backup source file as", src_bak_name)
@@ -828,7 +937,7 @@ for i, run in enumerate(runs):
     set_seed(SEED)
 
     avg_validations = []
-    avg_validations_by_sample_count = []
+    avg_validations_by_iteration = []
 
     run_name = f"run_{i}_{run[0]}"
 
@@ -842,6 +951,7 @@ for i, run in enumerate(runs):
         loss_func = None
         K.clear_session()
 
+        #model = create_model()
         model = create_model()
 
         logdir = f"logs/{name}/test/{name}_{run_name}_avg_{ac}"
@@ -857,15 +967,15 @@ for i, run in enumerate(runs):
         start = time.time()
         fprint(f"{i} RUN {run} avg_iter: {ac} started.")
         fprint(f"Train params {run[2]}")
-        validation, validation_by_sample_count, best_accuracies = train(mode, base_batch_size,
-                                                       curiosity_ratio=curiosity_ratio, params=params)
+        validation, validation_by_iteration, best_accuracies = train(mode, base_batch_size,
+                                                                     curiosity_ratio=curiosity_ratio, params=params)
         fprint(f"{i} RUN {run} avg_iter: {ac} done. Elapsed: ", time.time() - start)
 
         avg_validations.append(validation)
         np.savetxt(f'{root}/data_{name}_{run_name}_{ac}', validation, delimiter=',')
 
-        avg_validations_by_sample_count.append(validation_by_sample_count)
-        np.savetxt(f'{root}/data_{name}_{run_name}_{ac}_by_sample_count', validation_by_sample_count, delimiter=',')
+        avg_validations_by_iteration.append(validation_by_iteration)
+        np.savetxt(f'{root}/data_{name}_{run_name}_{ac}_by_iteration', validation_by_iteration, delimiter=',')
 
         test_writer.close()
         train_writer.close()
@@ -875,16 +985,16 @@ for i, run in enumerate(runs):
     avg_validation = np.mean(cut_avg_validations, axis=0)
     np.savetxt(f'{root}/data_{name}_{run_name}_avg', avg_validation, delimiter=',')
 
-    print("avg len", [len(x) for x in avg_validations_by_sample_count])
-    min_len = min([len(x) for x in avg_validations_by_sample_count])
-    cut_avg_validations_by_sample_count = [x[:min_len] for x in avg_validations_by_sample_count]
-    avg_validation_by_sample_count = np.mean(cut_avg_validations_by_sample_count, axis=0)
-    np.savetxt(f'{root}/data_{name}_{run_name}_avg_by_sample_count', avg_validation_by_sample_count, delimiter=',')
+    print("avg len", [len(x) for x in avg_validations_by_iteration])
+    min_len = min([len(x) for x in avg_validations_by_iteration])
+    cut_avg_validations_by_iteration = [x[:min_len] for x in avg_validations_by_iteration]
+    avg_validation_by_iteration = np.mean(cut_avg_validations_by_iteration, axis=0)
+    np.savetxt(f'{root}/data_{name}_{run_name}_avg_by_iteration', avg_validation_by_iteration, delimiter=',')
 
     # add accuracy on tensorboard
     logdir = f"logs/{name}/test/{name}_{run_name}_AVG"
     avg_val_writer = tf.summary.FileWriter(logdir)
-    for iter, loss, acc in avg_validation_by_sample_count:
+    for iter, loss, acc in avg_validation_by_iteration:
         summary = tf.Summary(value=[tf.Summary.Value(tag="average test accuracy",
                                                      simple_value=acc)])
         avg_val_writer.add_summary(summary, iter)
@@ -896,6 +1006,6 @@ for i, run in enumerate(runs):
     avg_acc = np.mean(best_accuracies[:, 0])
     avg_epoch = np.mean(best_accuracies[:, 1])
     avg_elapsed = np.mean(best_accuracies[:, 2])
-    fprint(f"Best average accuracy for run {run_name}: {avg_acc} at average epoch {avg_epoch} (avg_elapsed {avg_elapsed})")
+    fprint(f"### Best average accuracy for run {run_name}: {avg_acc} at average epoch {avg_epoch} (avg_elapsed {avg_elapsed})")
 
 
