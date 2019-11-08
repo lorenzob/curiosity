@@ -801,7 +801,7 @@ def log_tb_values(log_values, step, writer):
         summary_value = summary.value.add()
         summary_value.simple_value = value.item()
         summary_value.tag = name
-        train_writer.add_summary(summary, step)
+        writer.add_summary(summary, step)
     writer.flush()
 
 
@@ -1343,10 +1343,20 @@ cifar_resnet_comp5 = [#(SWITCH_MODE, 1, {'name': 'adv2_test_5-1_ss0.5', 'batch_s
                                       'dataset_ratio': 0.02, 'single_batch': True,
                                       'baseline_repetition_count': 1, 'full_mode_repetition_count': 1})]
 
+classic_cr_vs_full = [
+                    (BASELINE, -1, {'name': 'BASELINE', 'single_batch': True, 'batch_size': 60}),
+                    (SWITCH_MODE, -1, {'name': 'switch_3-1', 'batch_size': 60,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 3, 'full_mode_repetition_count': 1}),
+                    (CURIOSITY_FULL_MODE, 0.25, {'name': 'cur_full_25', 'batch_size': 60,
+                                                 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (CURIOSITY_MODE, 0.25, {'name': 'cur_25', 'batch_size': 60,
+                                                 'single_batch': True})]
+
 baseline_runs = [(BASELINE, -1, {'name': 'BASELINE', 'single_batch': True, 'batch_size': 50})]
 
 #runs = cifar_resnet_comp5
-runs = switch_test_short
+runs = classic_cr_vs_full
 
 
 notes = sys.argv[2]
