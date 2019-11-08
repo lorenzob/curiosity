@@ -69,7 +69,7 @@ Note: there can be subtle differences between the same mode run in single or in 
 CURIOSITY_MODE the first call to fit alters the loss so the choice of the extra batch changes slightly.
 
 
-
+https://www.kaggle.com/c/digit-recognizer/discussion/61480
 """
 
 from keras import Sequential, Model, regularizers
@@ -89,19 +89,24 @@ import numpy as np
 
 import tensorflow as tf
 
+from tf import resnet
+from tf.models import create_simple_model, create_adv_model, create_Adv2_model, create_MobileNetV2_model
+
 num_classes = 10
 # default: 3, 2
 # big comparison: 6, 3
 epochs = 100
-average_count = 3
+average_count = 3 #5
 
-VALIDATION_ITERATIONS = 100
+#VALIDATION_ITERATIONS = 100
+VALIDATION_ITERATIONS = 60000 / 60      #TEMP   (deve corrispondere a x_train.shape[0] / batch_size
+VALIDATION_ITERATIONS /= 10
 
-EARLY_STOP_PATIENCE = 15
+EARLY_STOP_PATIENCE = 10
 EARLY_STOP_TOLERANCE = 0.1 / 100
 
 # debug settings
-quick_debug= False
+quick_debug=False
 if quick_debug:
     epochs = 2
     average_count = 2
@@ -133,11 +138,9 @@ def fprint(*args):
 
 def data_generator_mnist(X, y, batchSize):
 
+    import sklearn
+
     if shuffle:
-        #combined = list(zip(X, y))
-        #random.shuffle(combined)
-        #X[:], y[:] = zip(*combined)
-        import sklearn
         X, y = sklearn.utils.shuffle(X, y)
 
     dataset = (X, y)
@@ -146,12 +149,17 @@ def data_generator_mnist(X, y, batchSize):
     i = 0
     while (True):
         if (i + batchSize > dataset_size):
-
             head = dataset[0][i:], dataset[1][i:]
             rest = batchSize - head[0].shape[0]
             tail = dataset[0][:rest], dataset[1][:rest]
             yield np.concatenate((head[0], tail[0])), np.concatenate((head[1], tail[1]))
-            i = rest
+
+            if shuffle:
+                X, y = sklearn.utils.shuffle(X, y)
+                dataset = (X, y)
+                i = 0
+            else:
+                i = rest
         else:
             yield dataset[0][i:i + batchSize], dataset[1][i:i + batchSize]
             i += batchSize
@@ -161,10 +169,10 @@ def data_generator_mnist(X, y, batchSize):
 img_rows, img_cols, channels = 28, 28, 1
 
 # the data, split between train and test sets
-#dataset_name = 'CIFAR'
 dataset_name = 'MNIST'
 #dataset_name = 'Fashion'
-fprint("Dataset ", dataset_name)
+#dataset_name = 'CIFAR'
+fprint("Dataset", dataset_name)
 if dataset_name == 'MNIST':
     (x_train, y_train), (x_test, y_test) = mnist.load_data()
 elif dataset_name == 'Fashion':
@@ -183,6 +191,10 @@ else:
     x_test = x_test.reshape(x_test.shape[0], img_rows, img_cols, channels)
     input_shape = (img_rows, img_cols, channels)
 
+print("x_train.shape", x_train.shape)
+print("x_test.shape", x_test.shape)
+#exit(1)
+
 x_train = x_train.astype('float32')
 x_test = x_test.astype('float32')
 x_train /= 255
@@ -200,125 +212,17 @@ x_train = x_train
 y_train = y_train
 
 
-def create_simple_model():
-
-    fprint("Base model")
-
-    model = Sequential()
-    model.add(Conv2D(32, kernel_size=(3, 3),
-                     activation='relu',
-                     input_shape=input_shape))
-    model.add(Conv2D(64, (3, 3), activation='relu'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-    model.add(Flatten())
-    model.add(Dense(128, activation='relu'))
-    model.add(Dropout(0.5))
-    model.add(Dense(num_classes))
-    model.add(Activation('softmax'))
-
-    return model
-
-def create_MobileNetV2_model():
-
-    base_model = keras.applications.mobilenet_v2.MobileNetV2(input_shape=input_shape,include_top=False,
-                                                             weights='imagenet',
-                                                             classes=10)
-    x = base_model.output
-    x = Flatten()(x)
-    x = Dense(256, activation='relu')(x)
-    predictions = Dense(10, activation='softmax')(x)
-
-    model = Model(input=base_model.input, output=predictions)
-
-    for i, layer in enumerate(model.layers):
-        print(i, layer.name)
-
-    for layer in model.layers[:20]:
-        layer.trainable = False
-    for layer in model.layers[20:]:
-        layer.trainable = True
-
-    return model
-
-
-def create_Adv2_model():
-
-    # https://appliedmachinelearning.blog/2018/03/24/achieving-90-accuracy-in-object-recognition-task-on-cifar-10-dataset-with-keras-convolutional-neural-networks/
-
-    weight_decay = 1e-4
-    model = Sequential()
-    model.add(Conv2D(32, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay),
-                     input_shape=input_shape.shape[1:]))
-    model.add(Activation('elu'))
-    model.add(BatchNormalization())
-    model.add(Conv2D(32, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay)))
-    model.add(Activation('elu'))
-    model.add(BatchNormalization())
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.2))
-
-    model.add(Conv2D(64, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay)))
-    model.add(Activation('elu'))
-    model.add(BatchNormalization())
-    model.add(Conv2D(64, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay)))
-    model.add(Activation('elu'))
-    model.add(BatchNormalization())
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.3))
-
-    model.add(Conv2D(128, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay)))
-    model.add(Activation('elu'))
-    model.add(BatchNormalization())
-    model.add(Conv2D(128, (3, 3), padding='same', kernel_regularizer=regularizers.l2(weight_decay)))
-    model.add(Activation('elu'))
-    model.add(BatchNormalization())
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.4))
-
-    model.add(Flatten())
-    model.add(Dense(num_classes, activation='softmax'))
-
-    return model
-
-#https://www.kaggle.com/yassineghouzam/introduction-to-cnn-keras-0-997-top-6
-def create_adv_model():
-
-    # also try:
-    # https://www.kaggle.com/elcaiseri/mnist-simple-cnn-keras-accuracy-0-99-top-1
-
-    fprint("Advanced model")
-
-    model = Sequential()
-
-    model.add(Conv2D(filters=32, kernel_size=(5, 5), padding='Same',
-                     activation='relu', input_shape=input_shape))
-    model.add(Conv2D(filters=32, kernel_size=(5, 5), padding='Same',
-                     activation='relu'))
-    model.add(MaxPool2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Conv2D(filters=64, kernel_size=(3, 3), padding='Same',
-                     activation='relu'))
-    model.add(Conv2D(filters=64, kernel_size=(3, 3), padding='Same',
-                     activation='relu'))
-    model.add(MaxPool2D(pool_size=(2, 2), strides=(2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Flatten())
-    model.add(Dense(256, activation="relu"))
-    model.add(Dropout(0.5))
-    model.add(Dense(10, activation="softmax"))
-
-    return model
-
 
 def create_model():
+
+    global x_train, x_test, train_callbacks, EARLY_STOP_TOLERANCE, EARLY_STOP_PATIENCE
 
     learning_rate=0.001
     fprint("learning_rate", learning_rate)
 
-    model_name = "SIMPLE"
+    #model_name = "SIMPLE"
+    #model_name = "RESNET"
+    model_name = "ADV2"
     fprint("model_name", model_name)
     if model_name == "SIMPLE":
         model = create_simple_model()
@@ -329,10 +233,27 @@ def create_model():
     elif model_name == "MOBILENET":
         model = create_MobileNetV2_model()
         learning_rate = 0.0001
+    elif model_name == "RESNET":
+        model, train_callbacks = resnet.create_resnet_model()
 
-    model.compile(loss=keras.losses.categorical_crossentropy,
-                  optimizer=keras.optimizers.Adam(lr=learning_rate),
-                  metrics=['accuracy'])
+
+        # Subtracting pixel mean improves accuracy
+        subtract_pixel_mean = True
+        if subtract_pixel_mean:
+            x_train_mean = np.mean(x_train, axis=0)
+            x_train -= x_train_mean
+            x_test -= x_train_mean
+
+        #VALIDATION_ITERATIONS = x_train.shape[0] / base_batch_size
+
+        EARLY_STOP_PATIENCE = 20
+        EARLY_STOP_TOLERANCE = 0.01 / 100
+
+    if not model_name.startswith("RESNET"):
+        print("Standard compile model")
+        model.compile(loss=keras.losses.categorical_crossentropy,
+                      optimizer=keras.optimizers.Adam(lr=learning_rate),
+                      metrics=['accuracy'])
 
     model.summary()
 
@@ -364,6 +285,7 @@ WEIGHTS_MODE = 'WEIGHTS_MODE'  # keras sample weights based on loss
 SWITCH_MODE = 'SWITCH_MODE'
 FULL_MODE='FULL_MODE'
 CURIOSITY_CONSUME_MODE='CURIOSITY_CONSUME_MODE'
+MIX_MODE = 'MIX_MODE'
 
 def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
@@ -374,7 +296,7 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
 
     k = int(base_batch_size * curiosity_ratio)
 
-    if mode in [BASELINE, WEIGHTS_MODE, FULL_MODE, SWITCH_MODE]:
+    if mode in [BASELINE, WEIGHTS_MODE, FULL_MODE, SWITCH_MODE, MIX_MODE]:
         batch_size = base_batch_size
     else:
         batch_size = base_batch_size - k
@@ -397,6 +319,20 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
     absolute_best_acc_iter = 0
     original_mode = mode
 
+    use_smoothed_loss = False
+    fprint("use_smoothed_loss", use_smoothed_loss)
+
+    use_smoothed_acc = False
+    fprint("use_smoothed_acc", use_smoothed_acc)
+
+    use_real_epochs = False
+    fprint("use_real_epochs", use_real_epochs)
+
+    all_losses = []  # for smoothed early stopping check
+    all_acc = []
+
+    repetition_count = params.get('repetition_count', 1)
+
     single_batch = params.get('single_batch', False)
     fprint("single_batch", single_batch)
 
@@ -405,29 +341,44 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
         print("##Epoch", e, batch_size)
         steps_per_epoch = int(x_train.shape[0] / base_batch_size)
         print("Steps per epoch:", steps_per_epoch)
-        for i in range(steps_per_epoch):
+        for _ in range(steps_per_epoch):
 
             start = time.time()
 
             images, labels = next(data_gen)
 
             if original_mode == SWITCH_MODE:
+
+                print("Curr mode", mode, ", remaining reps", repetition_count)
+
                 if mode == SWITCH_MODE:
-                    mode = FULL_MODE    # it switches immediately
-                if i % params['switch_count'] == 0:
-                    mode = BASELINE if mode == FULL_MODE else FULL_MODE
-                    print("Switching mode to", mode)
+                    mode = BASELINE
+                    repetition_count = params.get('baseline_repetition_count')
+                    print("Starting with mode to", mode, "for reps", repetition_count)
+
+                if repetition_count == 0:
+                    if mode == BASELINE:
+                        mode = FULL_MODE
+                        repetition_count = params.get('full_mode_repetition_count')
+                        print("Switching mode to", mode, "for reps", repetition_count)
+                    elif mode == FULL_MODE:
+                        mode = BASELINE
+                        repetition_count = params.get('baseline_repetition_count')
+                        print("Switching mode to", mode, "for reps", repetition_count)
+
+                # decrease it here even if the training follows
+                repetition_count -= 1
+                print("Next fit with mode", mode, " (remaining reps", repetition_count, ")")
 
             if warmup_iter > 0 and iteration < warmup_iter:
 
                 print("Warmup", iteration, '/', warmup_iter, " - Next mode", mode)
 
                 if single_batch:
-                    #assert len(labels) == base_batch_size
-                    #fitted = model_fit(images, labels, iteration)
-                    #sample_count += fitted
-                    #iteration += 1
-                    raise Exception("Not supported")
+                    assert len(labels) == batch_size
+                    fitted = model_fit(images, labels, iteration)
+                    sample_count += fitted
+                    iteration += 1
                 else:
                     # works only with cr 50
                     fitted = model_fit(images, labels, iteration)
@@ -616,7 +567,9 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
             elif mode == FULL_MODE:
 
                 if single_batch:
-                    raise Exception("Not supported")
+                    fitted = fit_by_loss_from_full_dataset(batch_size, params, iteration)
+                    sample_count += fitted
+                    iteration += 1
                 else:
 
                     hard_images, hard_labels = sample_by_loss_from_full_dataset(batch_size, params)
@@ -706,6 +659,28 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                           "pool loss ratio:",  np.mean(pool_losses)/np.mean(losses),
                           "- avg pool/train: ", np.mean(pool_losses), "/", np.mean(losses))
 
+            elif mode == MIX_MODE:
+
+                assert len(labels) == batch_size
+
+                curiosity_percentage = params['curiosity_percentage']
+                if single_batch:
+
+                    use_hard_batch = np.random.uniform()
+                    if use_hard_batch < curiosity_percentage:
+                        print("Hard batch", use_hard_batch, curiosity_percentage)
+                        fitted = fit_by_loss_from_full_dataset(batch_size, params, iteration)
+                    else:
+                        print("Normal batch", use_hard_batch, curiosity_percentage)
+                        fitted = model_fit(images, labels, iteration)
+
+                    sample_count += fitted
+                    iteration += 1
+
+                else:
+                    raise Exception("Not supported")
+
+
             elif mode == WEIGHTS_MODE:
 
                 # use keras sample weights to make the most difficult
@@ -731,10 +706,14 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 raise Exception("Unknown mode " + str(mode))
 
             real_epochs = sample_count / x_train.shape[0]  # number of iterations over the whole dataset
+            #print(iteration, e, "real_epochs", sample_count, x_train.shape[0], real_epochs)
             print("Iteration", iteration, ", processed samples", sample_count, "elapsed:", time.time() - start, f"(Real epochs: {round(real_epochs, 2)})")
 
-            if i % VALIDATION_ITERATIONS == 0:
+            if iteration % VALIDATION_ITERATIONS == 0 and iteration > 0:
+
                 print(f"Testing model... (iter_with_no_improvements: {iter_with_no_improvements}")
+
+                #validation_steps += 1
 
                 # eval training data too to make the charts (only a subset to speed it up)
                 indexes = np.arange(x_train.shape[0])
@@ -744,35 +723,45 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                 train_loss, train_acc = model.evaluate(x_train_sample, y_train_sample)
                 print("training loss_acc", train_loss, train_acc)
 
-                for name, value in [("loss", train_loss), ("accuracy", train_acc)]:
-                    summary = tf.Summary()
-                    summary_value = summary.value.add()
-                    summary_value.simple_value = value.item()
-                    summary_value.tag = name
-                    train_writer.add_summary(summary, iteration)
-                train_writer.flush()
+                log_step = real_epochs if use_real_epochs else iteration
+                log_tb_values([("loss", train_loss), ("accuracy", train_acc), ("acc", train_acc)], log_step, train_writer)
 
                 # eval test set
                 test_loss, test_acc = model.evaluate(x_test, y_test, callbacks=eval_callbacks)
                 print("test loss_acc", test_loss, test_acc)
 
-                for name, value in [("loss", test_loss), ("accuracy", test_acc)]:
-                    summary = tf.Summary()
-                    summary_value = summary.value.add()
-                    summary_value.simple_value = value.item()
-                    summary_value.tag = name
-                    test_writer.add_summary(summary, iteration)
-                test_writer.flush()
+                # use multiple names for comparison with keras charts (and my old charts...)
+                log_tb_values([("loss", test_loss), ("accuracy", test_acc),
+                               ("val_loss", test_loss), ("val_acc", test_acc)], log_step, test_writer)
+
+                all_acc.append(test_acc)
+                if use_smoothed_acc:
+                    smooth_size = 3  # 25
+                    smoothed_acc = np.mean(all_acc[-smooth_size:])
+                    print("smoothed_acc", smoothed_acc, "actual acc", test_acc)
+                    test_acc = smoothed_acc
+
+                    log_tb_values([("smoothed accuracy", test_acc)], log_step, test_writer)
 
                 validation.append(test_acc)
-                validation_by_iteration.append((iteration, test_loss, test_acc))
+                validation_by_iteration.append((log_step, test_loss, test_acc))
 
                 if test_acc > absolute_best_acc:
                     absolute_best_acc = test_acc
                     absolute_best_acc_iter = iteration
 
                 # early stop check
-                early_stop_curr_loss = test_loss
+                all_losses.append(test_loss)
+                if use_smoothed_loss:
+                    smooth_size = 3  # 25
+                    smoothed_loss = np.mean(all_losses[-smooth_size:])
+                    print("smoothed_loss", smoothed_loss, "actual loss", test_loss)
+                    early_stop_curr_loss = smoothed_loss
+
+                    log_tb_values([("smoothed loss", smoothed_loss)], log_step, test_writer)
+
+                else:
+                    early_stop_curr_loss = test_loss
 
                 perc_difference = (early_stop_curr_loss - best_loss) / best_loss
                 print("testing loss perc_difference", perc_difference * 100, "%", "prev best_loss", best_loss, "curr loss", early_stop_curr_loss)
@@ -789,6 +778,9 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
                     best_accuracies.append((absolute_best_acc, absolute_best_acc_iter, time.time() - train_start))
                     break
 
+                print(f"Total smoothness at iteration {iteration}", smoothness(all_losses))
+                print(f"Recent smoothness at iteration {iteration}", smoothness(all_losses[-25:]))
+
         if iter_with_no_improvements > EARLY_STOP_PATIENCE:
             break
 
@@ -799,7 +791,18 @@ def train(mode, base_batch_size, curiosity_ratio=1, params=None):
     fprint("Total processed samples", sample_count, "elapsed:", time.time() - train_start)
     fprint("Best loss", best_loss, "at iteration", best_loss_iter, f"(Real epochs: {round(real_epochs, 2)})")
     fprint("Best accuracy", absolute_best_acc, "at iteration", absolute_best_acc_iter, f"(Real epochs: {round(real_epochs, 2)})")
+    fprint("Total smoothness", smoothness(all_losses))
     return validation, validation_by_iteration, best_accuracies
+
+
+def log_tb_values(log_values, step, writer):
+    for name, value in log_values:
+        summary = tf.Summary()
+        summary_value = summary.value.add()
+        summary_value.simple_value = value.item()
+        summary_value.tag = name
+        train_writer.add_summary(summary, step)
+    writer.flush()
 
 
 def fit_batch_in_two_steps(images, labels, batch_size, k, iteration):
@@ -961,6 +964,13 @@ def compute_losses(images, labels):
     losses = loss_func([images, labels])[0]
     return losses
 
+def smoothness(a):
+
+    if len(a) == 0:
+        return 0
+
+    return np.std(np.diff(a)) / np.abs(np.mean(np.diff(a)))
+
 cur_comp_sb = [
         (CURIOSITY_FULL_MODE, 0.01, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_01_sb', 'single_batch': True}),
         (CURIOSITY_FULL_MODE, 0.25, {'dataset_ratio': 0.02, 'name': 'CAP_FIX_25_sb', 'single_batch': True}),
@@ -1055,13 +1065,289 @@ full_comp_sb = [(BASELINE, 0.50, {'name': 'full_comp_sb_BL', 'single_batch': Tru
                     (CURIOSITY_FULL_MODE, 0.70, {'name': 'full_comp_sb_70', 'dataset_ratio': 0.02, 'single_batch': True}),
                     (CURIOSITY_FULL_MODE, 0.80, {'name': 'full_comp_sb_80', 'dataset_ratio': 0.02, 'single_batch': True}),
                     (CURIOSITY_FULL_MODE, 0.90, {'name': 'full_comp_sb_90', 'dataset_ratio': 0.02, 'single_batch': True}),
-                    (CURIOSITY_FULL_MODE, 0.99, {'name': 'full_comp_sb_100', 'dataset_ratio': 0.02, 'single_batch': True})]
+                    (CURIOSITY_FULL_MODE, 0.99, {'name': 'full_comp_sb_99', 'dataset_ratio': 0.02, 'single_batch': True})]
 
+full_mix_comp_sb = [(BASELINE, 0.50, {'batch_size': 62, 'name': 'full_mix_comp_sb_BL', 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0, 'name': 'full_mix_comp_sb_0', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.05, 'name': 'full_mix_comp_sb_5', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.10, 'name': 'full_mix_comp_sb_10', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.20, 'name': 'full_mix_comp_sb_20', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.30, 'name': 'full_mix_comp_sb_30', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.40, 'name': 'full_mix_comp_sb_40', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.50, 'name': 'full_mix_comp_sb_50', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.60, 'name': 'full_mix_comp_sb_60', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.70, 'name': 'full_mix_comp_sb_70', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.80, 'name': 'full_mix_comp_sb_80', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.90, 'name': 'full_mix_comp_sb_90', 'dataset_ratio': 0.02, 'single_batch': True}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 1, 'name': 'full_mix_comp_sb_100', 'dataset_ratio': 0.02, 'single_batch': True})]
 
+mix_test_sb = [(MIX_MODE, 1, {'curiosity_percentage': 0, 'name': 'full_mix_comp_sb_0', 'dataset_ratio': 0.02,
+                              'single_batch': True}),
+               (MIX_MODE, 1, {'curiosity_percentage': 0.50, 'name': 'full_mix_comp_sb_50', 'dataset_ratio': 0.02,
+                              'single_batch': True})]
 
-runs = full_comp_sb
+BLine_mix_test = [(MIX_MODE, 1, {'batch_size': 10, 'curiosity_percentage': 0.5, 'name': 'BLine_mix_test_10', 'dataset_ratio': 0.02,
+                                 'single_batch': True}),
+                  (MIX_MODE, 1, {'batch_size': 20, 'curiosity_percentage': 0.5, 'name': 'BLine_mix_test_20', 'dataset_ratio': 0.02,
+                                 'single_batch': True}),
+                  (MIX_MODE, 1, {'batch_size': 30, 'curiosity_percentage': 0.5, 'name': 'BLine_mix_test_30', 'dataset_ratio': 0.02,
+                                 'single_batch': True}),
+                  (MIX_MODE, 1, {'batch_size': 45, 'curiosity_percentage': 0.5, 'name': 'BLine_mix_test_45', 'dataset_ratio': 0.02,
+                                 'single_batch': True}),
+                  (MIX_MODE, 1, {'batch_size': 60, 'curiosity_percentage': 0.5, 'name': 'BLine_mix_test_60', 'dataset_ratio': 0.02,
+                                 'single_batch': True}),
+                  (MIX_MODE, 1, {'batch_size': 125, 'curiosity_percentage': 0.5, 'name': 'BLine_mix_test_125', 'dataset_ratio': 0.02,
+                                 'single_batch': True})]
 
-base_batch_size = 125
+switch_test = [(BASELINE, 1, {'batch_size': 62, 'name': 'switch_test_BL', 'single_batch': True}),
+               (SWITCH_MODE, 1, {'name': 'switch_test_1-1', 'batch_size': 62,
+                                 'dataset_ratio': 0.02, 'single_batch': True,
+                                 'baseline_repetition_count': 1, 'full_mode_repetition_count': 1}),
+               (SWITCH_MODE, 1, {'name': 'switch_test_1-2', 'batch_size': 62,
+                                 'dataset_ratio': 0.02, 'single_batch': True,
+                                 'baseline_repetition_count': 1, 'full_mode_repetition_count': 2}),
+               (SWITCH_MODE, 1, {'name': 'switch_test_1-3', 'batch_size': 62,
+                                 'dataset_ratio': 0.02, 'single_batch': True,
+                                 'baseline_repetition_count': 1, 'full_mode_repetition_count': 3}),
+               (SWITCH_MODE, 1, {'name': 'switch_test_1-4', 'batch_size': 62,
+                                 'dataset_ratio': 0.02, 'single_batch': True,
+                                 'baseline_repetition_count': 1, 'full_mode_repetition_count': 4}),
+               (SWITCH_MODE, 1, {'name': 'switch_test_2-4', 'batch_size': 62,
+                                 'dataset_ratio': 0.02, 'single_batch': True,
+                                 'baseline_repetition_count': 2, 'full_mode_repetition_count': 4}),
+               (SWITCH_MODE, 1, {'name': 'switch_test_1-5', 'batch_size': 62,
+                                 'dataset_ratio': 0.02, 'single_batch': True,
+                                 'baseline_repetition_count': 1, 'full_mode_repetition_count': 5}),
+               (SWITCH_MODE, 1, {'name': 'switch_test_3-5', 'batch_size': 62,
+                                 'dataset_ratio': 0.02, 'single_batch': True,
+                                 'baseline_repetition_count': 3, 'full_mode_repetition_count': 5}),
+               (SWITCH_MODE, 1, {'name': 'switch_test_1-10', 'batch_size': 62,
+                                 'dataset_ratio': 0.02, 'single_batch': True,
+                                 'baseline_repetition_count': 1, 'full_mode_repetition_count': 10})]
+
+switch_test_det = [(BASELINE, 1, {'batch_size': 62, 'name': 'switch_test_BL', 'single_batch': True}),
+                   (SWITCH_MODE, 1, {'name': 'switch_test_10k-1', 'batch_size': 62,
+                                 'dataset_ratio': 0.02, 'single_batch': True,
+                                 'baseline_repetition_count': 10000, 'full_mode_repetition_count': 1}),
+                   (SWITCH_MODE, 1, {'name': 'switch_test_1-2', 'batch_size': 62,
+                                     'dataset_ratio': 0.02, 'single_batch': True,
+                                     'baseline_repetition_count': 1, 'full_mode_repetition_count': 2}),
+                   (SWITCH_MODE, 1, {'name': 'switch_test_2-4', 'batch_size': 62,
+                                     'dataset_ratio': 0.02, 'single_batch': True,
+                                     'baseline_repetition_count': 2, 'full_mode_repetition_count': 4}),
+                   (SWITCH_MODE, 1, {'name': 'switch_test_2-6', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 2, 'full_mode_repetition_count': 6}),
+                   (SWITCH_MODE, 1, {'name': 'switch_test_3-6', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 3, 'full_mode_repetition_count': 6}),
+                   (SWITCH_MODE, 1, {'name': 'switch_test_2-8', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 2, 'full_mode_repetition_count': 8})]
+
+switch_test_short = [(SWITCH_MODE, 1, {'name': 'switch_test_1-1', 'batch_size': 62,
+                                 'dataset_ratio': 0.02, 'single_batch': True,
+                                 'baseline_repetition_count': 1, 'full_mode_repetition_count': 3})]
+
+switch_test_low = [
+                    (SWITCH_MODE, 1, {'name': 'rep_test_1-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'rep_test_2-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 2, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'rep_test_3-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 3, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'rep_test_4-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 4, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'rep_test_5-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 5, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'rep_test_7-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 7, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'rep_test_10-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 10, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'rep_test_20-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 20, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'rep_test_50-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 50, 'full_mode_repetition_count': 1})]
+
+switch_test_high = [
+                      (SWITCH_MODE, 1, {'name': 'switch_test_1-20', 'batch_size': 62,
+                          'dataset_ratio': 0.02, 'single_batch': True,
+                          'baseline_repetition_count': 1, 'full_mode_repetition_count': 20}),
+                      (SWITCH_MODE, 1, {'name': 'switch_test_1-30', 'batch_size': 62,
+                          'dataset_ratio': 0.02, 'single_batch': True,
+                          'baseline_repetition_count': 1, 'full_mode_repetition_count': 30}),
+                      (SWITCH_MODE, 1, {'name': 'switch_test_1-50', 'batch_size': 62,
+                          'dataset_ratio': 0.02, 'single_batch': True,
+                          'baseline_repetition_count': 1, 'full_mode_repetition_count': 50}),
+                      (SWITCH_MODE, 1, {'name': 'switch_test_1-100', 'batch_size': 62,
+                          'dataset_ratio': 0.02, 'single_batch': True,
+                          'baseline_repetition_count': 1, 'full_mode_repetition_count': 100}),
+                      (SWITCH_MODE, 1, {'name': 'switch_test_1-500', 'batch_size': 62,
+                          'dataset_ratio': 0.02, 'single_batch': True,
+                          'baseline_repetition_count': 1, 'full_mode_repetition_count': 500}),
+                      (SWITCH_MODE, 1, {'name': 'switch_test_1-10k', 'batch_size': 62,
+                          'dataset_ratio': 0.02, 'single_batch': True,
+                          'baseline_repetition_count': 1, 'full_mode_repetition_count': 10000}),
+                      (SWITCH_MODE, 1, {'name': 'switch_test_10k-1', 'batch_size': 62,
+                          'dataset_ratio': 0.02, 'single_batch': True,
+                          'baseline_repetition_count': 10000, 'full_mode_repetition_count': 1}),
+                        ]
+
+switch_test_mid_low = [
+                        (SWITCH_MODE, 1, {'name': 'rep_test_1000-1', 'batch_size': 62,
+                                          'dataset_ratio': 0.02, 'single_batch': True,
+                                          'baseline_repetition_count': 1000, 'full_mode_repetition_count': 1}),
+                        (SWITCH_MODE, 1, {'name': 'rep_test_500-1', 'batch_size': 62,
+                                          'dataset_ratio': 0.02, 'single_batch': True,
+                                          'baseline_repetition_count': 500, 'full_mode_repetition_count': 1}),
+                        (SWITCH_MODE, 1, {'name': 'rep_test_250-1', 'batch_size': 62,
+                                          'dataset_ratio': 0.02, 'single_batch': True,
+                                          'baseline_repetition_count': 250, 'full_mode_repetition_count': 1}),
+                        (SWITCH_MODE, 1, {'name': 'rep_test_100-1', 'batch_size': 62,
+                                          'dataset_ratio': 0.02, 'single_batch': True,
+                                          'baseline_repetition_count': 100, 'full_mode_repetition_count': 1}),
+                        (SWITCH_MODE, 1, {'name': 'rep_test_75-1', 'batch_size': 62,
+                                          'dataset_ratio': 0.02, 'single_batch': True,
+                                          'baseline_repetition_count': 75, 'full_mode_repetition_count': 1})]
+
+repetitions_vs_mix = [
+                    (SWITCH_MODE, 1, {'name': 'rep_mix_test_1-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 1}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.50, 'name': 'rep_mix_test_50',
+                                   'dataset_ratio': 0.02, 'single_batch': True}),
+
+                    (SWITCH_MODE, 1, {'name': 'rep_test_1-3', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 3}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.75, 'name': 'rep_mix_test_75',
+                                   'dataset_ratio': 0.02, 'single_batch': True}),
+
+                    (SWITCH_MODE, 1, {'name': 'rep_test_1-9', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 9}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.90, 'name': 'rep_mix_test_90',
+                                   'dataset_ratio': 0.02, 'single_batch': True}),
+
+                    (SWITCH_MODE, 1, {'name': 'rep_test_1-19', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 19}),
+                    (MIX_MODE, 1, {'batch_size': 62, 'curiosity_percentage': 0.95, 'name': 'rep_mix_test_95',
+                                   'dataset_ratio': 0.02, 'single_batch': True})]
+
+switch_test_short = [
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_1M-1', 'batch_size': 60,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1000*1000, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_10-1', 'batch_size': 60,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 10, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_5-1', 'batch_size': 60,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 5, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_1-1', 'batch_size': 60,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_1-2', 'batch_size': 60,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 2}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_1-5', 'batch_size': 60,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 5}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_1-50', 'batch_size': 60,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 50}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_1-1M', 'batch_size': 60,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 1000*1000})]
+
+cifar_resnet_comp2 = [
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_100-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 100, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_50-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 50, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_25-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 25, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_20-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 20, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_15-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 15, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_12-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 12, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_7-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 7, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_5-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 5, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_3-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 3, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_2-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 2, 'full_mode_repetition_count': 1})]
+
+cifar_resnet_comp3 = [
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_10k-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1000*1000, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_5-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 5, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_3-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 3, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_2-1', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 2, 'full_mode_repetition_count': 1})]
+
+cifar_resnet_comp4 = [
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_5-1wup', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True, 'warmup_iter': 800,
+                                      'baseline_repetition_count': 5, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_5-1_ss3', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True, 'soft_sampling': 3,
+                                      'baseline_repetition_count': 5, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_5-1_ss6', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True, 'soft_sampling': 6,
+                                      'baseline_repetition_count': 5, 'full_mode_repetition_count': 1}),
+                    (SWITCH_MODE, 1, {'name': 'adv2_test_1-1bis', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 1})]
+
+cifar_resnet_comp5 = [#(SWITCH_MODE, 1, {'name': 'adv2_test_5-1_ss0.5', 'batch_size': 62,
+                      #                'dataset_ratio': 0.02, 'single_batch': True, 'soft_sampling': 0.5,
+                      #                'baseline_repetition_count': 5, 'full_mode_repetition_count': 1}),
+                      #(CURIOSITY_FULL_MODE, 0.1, {'name': 'cur_10', 'batch_size': 62,
+                      #                              'dataset_ratio': 0.02, 'single_batch': True}),
+                      (CURIOSITY_FULL_MODE, 0.25, {'name': 'cur_25', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True}),
+                      (CURIOSITY_FULL_MODE, 0.5, {'name': 'cur_50', 'batch_size': 62,
+                                        'dataset_ratio': 0.02, 'single_batch': True}),
+                      (SWITCH_MODE, 1, {'name': 'adv2_test_1-1bis', 'batch_size': 62,
+                                      'dataset_ratio': 0.02, 'single_batch': True,
+                                      'baseline_repetition_count': 1, 'full_mode_repetition_count': 1})]
+
+baseline_runs = [(BASELINE, -1, {'name': 'BASELINE', 'single_batch': True, 'batch_size': 50})]
+
+#runs = cifar_resnet_comp5
+runs = switch_test_short
+
 
 notes = sys.argv[2]
 
@@ -1077,7 +1363,7 @@ for i in range(100):
 fprint(f"NOTES: {notes}")
 fprint(f"PARAMS: SEED {SEED}, DEFAULT_SOFT_SAMPLING {DEFAULT_SOFT_SAMPLING}, shuffle {shuffle}")
 fprint(f"PARAMS: EARLY_STOP_PATIENCE {EARLY_STOP_PATIENCE}, EARLY_STOP_TOLERANCE {EARLY_STOP_TOLERANCE}")
-fprint(f"PARAMS: epochs {epochs}, average_count {average_count}, base_batch_size {base_batch_size}")
+fprint(f"PARAMS: epochs {epochs}, average_count {average_count}")
 fprint("RUNS:", runs)
 
 for i, run in enumerate(runs):
@@ -1094,6 +1380,11 @@ for i, run in enumerate(runs):
     if 'name' in params:
         run_name = params['name'] + '_' + run_name
 
+    base_batch_size = params.get("batch_size", 125)
+
+    fprint(f"PARAMS: base_batch_size {base_batch_size}")
+
+    best_accuracies = []
     for ac in range(average_count):
 
         model = None
@@ -1116,9 +1407,11 @@ for i, run in enumerate(runs):
         start = time.time()
         fprint(f"{i} RUN {run} avg_iter: {ac} started.")
         fprint(f"Train params {run[2]}")
-        validation, validation_by_iteration, best_accuracies = train(mode, base_batch_size,
+        validation, validation_by_iteration, avg_accuracies = train(mode, base_batch_size,
                                                                      curiosity_ratio=curiosity_ratio, params=params)
         fprint(f"{i} RUN {run} avg_iter: {ac} done. Elapsed: ", time.time() - start)
+
+        best_accuracies.append(avg_accuracies)
 
         avg_validations.append(validation)
         np.savetxt(f'{root}/data_{name}_{run_name}_{ac}', validation, delimiter=',')
@@ -1155,6 +1448,11 @@ for i, run in enumerate(runs):
     avg_acc = np.mean(best_accuracies[:, 0])
     avg_epoch = np.mean(best_accuracies[:, 1])
     avg_elapsed = np.mean(best_accuracies[:, 2])
-    fprint(f"### Best average accuracy for run {run_name}: {avg_acc} at average epoch {avg_epoch} (avg_elapsed {avg_elapsed})")
+
+    std_acc = np.std(best_accuracies[:, 0])
+    std_epoch = np.std(best_accuracies[:, 1])
+    std_elapsed = np.std(best_accuracies[:, 2])
+
+    fprint(f"### Best average accuracy for run {run_name}: {avg_acc}({std_acc}) at average epoch {avg_epoch}({std_epoch}) (avg_elapsed {avg_elapsed}({std_elapsed}))")
 
 
